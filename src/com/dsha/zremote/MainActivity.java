@@ -545,7 +545,7 @@ public class MainActivity extends Activity
     private void showRePairDialog() {
         new android.app.AlertDialog.Builder(this)
                 .setTitle("重新配对")
-                .setMessage("桌面端 ZCode 打开「手机远程控制」显示二维码后，点「扫码配对」对准扫一下即可；\n\n若手机剪贴板里已有配对链接，可选「粘贴链接」。")
+                .setMessage("桌面端 ZCode 打开「手机远程控制」显示二维码后，点「扫码配对」对准扫一下即可；\n\n剪贴板里已有链接可选「粘贴链接」；也可在手机浏览器打开链接后点「分享」选本应用导入。")
                 .setPositiveButton("扫码配对", (d, w) -> startScanPairing())
                 .setNeutralButton("粘贴链接", (d, w) -> PanelController.showImportDialog())
                 .setNegativeButton("取消", null)

@@ -9,6 +9,8 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.Canvas;
+import android.graphics.Paint;
 import android.net.Uri;
 import android.os.Environment;
 import android.content.MutableContextWrapper;
@@ -68,6 +70,19 @@ public final class PanelController {
         FrameLayout root = new FrameLayout(sCtxWrapper);
         root.addView(sWebView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        // 右上角常驻扫码钮：桌面端刷新二维码作废旧会话时（URL 仍是 /remote、底部按钮隐藏），随时可重连
+        View corner = new QrScanIconView(sCtxWrapper);
+        corner.setContentDescription("扫码配对");
+        corner.setOnClickListener(v -> {
+            if (sOnScan != null) sOnScan.run();
+        });
+        FrameLayout.LayoutParams cornerLp = new FrameLayout.LayoutParams(
+                (int) dp(40), (int) dp(40), Gravity.TOP | Gravity.END);
+        cornerLp.topMargin = (int) dp(10);
+        cornerLp.rightMargin = (int) dp(10);
+        root.addView(corner, cornerLp);
+
         LinearLayout pills = new LinearLayout(sCtxWrapper);
         pills.setOrientation(LinearLayout.HORIZONTAL);
         pills.setGravity(Gravity.CENTER);
@@ -78,13 +93,24 @@ public final class PanelController {
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         pasteLp.leftMargin = (int) dp(10);
         pills.addView(buildPillButton("粘贴链接", v -> showImportDialog()), pasteLp);
-        pills.setVisibility(View.GONE);
+
+        LinearLayout pillBox = new LinearLayout(sCtxWrapper);
+        pillBox.setOrientation(LinearLayout.VERTICAL);
+        pillBox.setGravity(Gravity.CENTER);
+        pillBox.addView(pills);
+        TextView hint = new TextView(sCtxWrapper);
+        hint.setText("也可在浏览器打开配对链接后，点\"分享\"选本应用导入");
+        hint.setTextSize(11);
+        hint.setTextColor(0x99CFD8DC);
+        hint.setPadding(0, (int) dp(8), 0, 0);
+        pillBox.addView(hint);
+        pillBox.setVisibility(View.GONE);
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
         lp.bottomMargin = (int) dp(28);
-        root.addView(pills, lp);
-        sPillBox = pills;
+        root.addView(pillBox, lp);
+        sPillBox = pillBox;
         return root;
     }
 
@@ -146,6 +172,37 @@ public final class PanelController {
         b.setPadding((int) dp(20), (int) dp(8), (int) dp(20), (int) dp(8));
         b.setOnClickListener(l);
         return b;
+    }
+
+    /** 右上角常驻扫码钮：手绘二维码图形，半透明深色圆角底，深浅主题下都可见。 */
+    private static final class QrScanIconView extends View {
+        private final Paint mPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        QrScanIconView(Context c) {
+            super(c);
+            setClickable(true);
+        }
+
+        @Override
+        protected void onDraw(Canvas cv) {
+            float s = getWidth();
+            mPaint.setStyle(Paint.Style.FILL);
+            mPaint.setColor(0x8C141A20);
+            cv.drawRoundRect(0, 0, s, s, s * 0.22f, s * 0.22f, mPaint);
+            mPaint.setColor(0xE6CFD8DC);
+            float m = s * 0.24f;
+            float u = (s - 2 * m) / 4f;
+            mPaint.setStyle(Paint.Style.STROKE);
+            mPaint.setStrokeWidth(Math.max(1.5f, s * 0.055f));
+            // 三个"回"字定位角 + 右下两点，拼出二维码的标志性形状
+            cv.drawRect(m, m, m + 2 * u, m + 2 * u, mPaint);
+            cv.drawRect(s - m - 2 * u, m, s - m, m + 2 * u, mPaint);
+            cv.drawRect(m, s - m - 2 * u, m + 2 * u, s - m, mPaint);
+            mPaint.setStyle(Paint.Style.FILL);
+            float x = s - m - 2 * u, y = s - m - 2 * u;
+            cv.drawRect(x, y, x + u, y + u, mPaint);
+            cv.drawRect(x + u, y + u, x + 2 * u, y + 2 * u, mPaint);
+        }
     }
 
     /** Activity 销毁：摘下视图、解除 Activity 引用，WebView 本体和会话保留。 */
@@ -304,7 +361,7 @@ public final class PanelController {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         new AlertDialog.Builder(sActivity)
                 .setTitle("导入配对链接")
-                .setMessage("最快：桌面端 ZCode 打开「手机远程控制」显示二维码后，用面板底部的「扫码配对」直接扫。\n\n备选：桌面端配对对话框里点\"复制链接\"，把链接发到手机（微信/QQ 均可）后复制，回到这里粘贴打开。\n\n一次性设置：系统设置 → 应用管理 → 本应用 → 默认打开 → 开启\"打开支持的链接\"，之后扫码即可直接进 APP。")
+                .setMessage("最快：桌面端 ZCode 打开「手机远程控制」显示二维码后，用面板右上角的扫码钮（或底部「扫码配对」）直接扫。\n\n备选一：桌面端配对对话框点\"复制链接\"，把链接发到手机（微信/QQ 均可）后复制，回到这里粘贴打开。\n\n备选二：在手机浏览器打开配对链接，点「分享」选本应用即可导入。")
                 .setView(wrap)
                 .setPositiveButton("打开", (d, w) -> {
                     String t = et.getText().toString().trim();
