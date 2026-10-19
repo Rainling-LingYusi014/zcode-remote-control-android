@@ -89,17 +89,8 @@ public final class PanelController {
         root.addView(corner, cornerLp);
 
         // 扫码钮左侧的 ? 帮助钮：点开看完整的配对/重连方式说明，与扫码钮同显隐
-        TextView help = new TextView(sCtxWrapper);
-        help.setText("?");
-        help.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        help.setTextSize(16);
-        help.setTextColor(0xE6CFD8DC);
-        help.setGravity(Gravity.CENTER);
-        android.graphics.drawable.GradientDrawable helpBg = new android.graphics.drawable.GradientDrawable();
-        helpBg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
-        helpBg.setColor(0x00000000);
-        helpBg.setStroke((int) dp(2), 0xE6CFD8DC); // 圆环与问号同色
-        help.setBackground(helpBg);
+        View help = new QrHelpIconView(sCtxWrapper);
+        help.setContentDescription("配对帮助");
         help.setOnClickListener(v -> showPairHelp());
         help.setVisibility(View.GONE);
         sHelp = help;
@@ -190,6 +181,32 @@ public final class PanelController {
     private static void showCorner(boolean show) {
         if (sCorner != null) sCorner.setVisibility(show ? View.VISIBLE : View.GONE);
         if (sHelp != null) sHelp.setVisibility(show ? View.VISIBLE : View.GONE);
+    }
+
+    /** 右上角 ? 帮助钮：圆环跨度与扫码框四角跨度一致（0.6s），线宽颜色同扫码线条。 */
+    private static final class QrHelpIconView extends View {
+        private final Paint mPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint mText = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        QrHelpIconView(Context c) {
+            super(c);
+            setClickable(true);
+            mText.setTextAlign(Paint.Align.CENTER);
+        }
+
+        @Override
+        protected void onDraw(Canvas cv) {
+            float s = getWidth();
+            mPaint.setColor(0xE6CFD8DC);
+            mPaint.setStyle(Paint.Style.STROKE);
+            mPaint.setStrokeWidth(Math.max(1.5f, s * 0.06f));
+            mPaint.setStrokeCap(Paint.Cap.ROUND);
+            cv.drawCircle(s / 2f, s / 2f, s * 0.30f, mPaint);
+            mText.setColor(0xE6CFD8DC);
+            mText.setTextSize(s * 0.30f);
+            mText.setFakeBoldText(true);
+            cv.drawText("?", s / 2f, s / 2f - (mText.ascent() + mText.descent()) / 2f, mText);
+        }
     }
 
     /** 右上角 ? 帮助钮：完整列出全部配对/重连方式与适用场景。 */
