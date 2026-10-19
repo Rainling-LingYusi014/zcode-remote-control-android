@@ -19,19 +19,6 @@ final class AppSettings {
         SyncJobService.schedule(c, min);
     }
 
-    static boolean realtime(Context c) {
-        return p(c).getBoolean("realtime", false);
-    }
-
-    static void setRealtime(Context c, boolean on) {
-        p(c).edit().putBoolean("realtime", on).apply();
-        if (on) {
-            KeepAliveService.start(c);
-        } else {
-            KeepAliveService.stop(c);
-        }
-    }
-
     static boolean quietOn(Context c) {
         return p(c).getBoolean("quiet_on", false);
     }
@@ -56,6 +43,54 @@ final class AppSettings {
         return String.format(java.util.Locale.US, "%02d:%02d", minOfDay / 60, minOfDay % 60);
     }
 
+    // ---- 桌面直推（v2）----
+
+    static boolean ntfyOn(Context c) {
+        return p(c).getBoolean("ntfy_on", false);
+    }
+
+    static void setNtfyOn(Context c, boolean on) {
+        // 开启时重置时间水位：从此刻起的消息才需要送达（不吃 ntfy 12h 缓存积压）
+        p(c).edit().putBoolean("ntfy_on", on)
+                .putLong("ntfy_base_ts", System.currentTimeMillis() / 1000)
+                .apply();
+    }
+
+    static String ntfyServer(Context c) {
+        return p(c).getString("ntfy_server", "https://ntfy.sh");
+    }
+
+    static void setNtfyServer(Context c, String server) {
+        String s = server == null ? "" : server.trim();
+        if (!s.startsWith("http://") && !s.startsWith("https://")) s = "https://ntfy.sh";
+        p(c).edit().putString("ntfy_server", s).apply();
+    }
+
+    static String ntfyTopic(Context c) {
+        return p(c).getString("ntfy_topic", "");
+    }
+
+    static void setNtfyTopic(Context c, String topic) {
+        p(c).edit().putString("ntfy_topic", topic == null ? "" : topic.trim()).apply();
+    }
+
+    /** Topic 展示用打码（凭据，避免设置页肩窥泄露全量）。 */
+    static String ntfyTopicMasked(Context c) {
+        String t = ntfyTopic(c);
+        if (t.isEmpty()) return "未设置";
+        return t.length() <= 8 ? t.substring(0, 2) + "…"
+                : t.substring(0, 4) + "…" + t.substring(t.length() - 4);
+    }
+
+    static String ntfyLastText(Context c) {
+        long ms = p(c).getLong("ntfy_last_at", 0);
+        String r = p(c).getString("ntfy_last_result", "");
+        if (ms == 0 || r.isEmpty()) return "从未拉取";
+        long delta = (System.currentTimeMillis() - ms) / 60000;
+        String ago = delta < 1 ? "刚刚" : delta + " 分钟前";
+        return ago + " · " + r;
+    }
+
     static void setLastCheck(Context c, long ms, String result) {
         p(c).edit().putLong("last_check_ms", ms).putString("last_check_result", result).apply();
     }
@@ -68,12 +103,10 @@ final class AppSettings {
         return ago + " · " + p(c).getString("last_check_result", "");
     }
 
-    /** 应用启动时按当前设置恢复调度与服务。 */
+    /** 应用启动时按当前设置恢复调度；并清理 v1「实时模式」遗留偏好（L2 已在 v1.2.0 移除）。 */
     static void bootstrap(Context c) {
         SyncJobService.schedule(c, intervalMin(c));
-        if (realtime(c)) {
-            KeepAliveService.start(c);
-        }
+        p(c).edit().remove("realtime").apply();
     }
 
     private AppSettings() {}

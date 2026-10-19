@@ -28,9 +28,13 @@ public final class NotifyEngine {
 
     public static final String CH_DONE = "task_done";
     public static final String CH_ALERT = "task_alert";
-    public static final String CH_SERVICE = "service";
     public static final String BRIDGE_NAME = "zrcBridge";
+    /** v1 的 L2 前台服务渠道 id，v1.2.0 起不再创建，仅用于清理老安装的残留渠道。 */
+    private static final String CH_SERVICE_LEGACY = "service";
     private static final int MAX_HISTORY = 200;
+    /** 三源去重窗口：同任务同终态 150s 内视为重复（L1 注入 / v2 直推 / L3 兜底重叠）。 */
+    private static final long DEDUP_WINDOW_MS = 150_000L;
+    private static final int DEDUP_SCAN = 50;
 
     private static Context sApp;
     private static final ArrayList<JSONObject> sHistory = new ArrayList<>();
@@ -63,11 +67,7 @@ public final class NotifyEngine {
         alert.setDescription("任务失败或需要处理");
         alert.enableVibration(true);
         nm.createNotificationChannel(alert);
-        NotificationChannel svc = new NotificationChannel(
-                CH_SERVICE, "实时模式", NotificationManager.IMPORTANCE_MIN);
-        svc.setDescription("前台服务常驻通知");
-        svc.setShowBadge(false);
-        nm.createNotificationChannel(svc);
+        nm.deleteNotificationChannel(CH_SERVICE_LEGACY); // v1「实时模式」渠道清理
         loadHistory();
     }
 
@@ -119,7 +119,11 @@ public final class NotifyEngine {
         }
     }
 
-    /** 解析事件数组：[{t,id,name,from,to}]，发通知 + 记历史。其余类型只记历史不通知。 */
+    /**
+     * 解析事件数组：[{t,id,name,from,to}]，发通知 + 记历史。其余类型只记历史不通知。
+     * 三源（L1 注入 / v2 ntfy 直推 / L3 兜底 diff）会产生重叠：同任务同终态在
+     * 去重窗口内只记第一条，后续丢弃（不记历史不弹通知）。
+     */
     static synchronized void onTaskEvents(String json) {
         try {
             JSONArray arr = new JSONArray(json);
@@ -127,6 +131,7 @@ public final class NotifyEngine {
                 JSONObject ev = arr.getJSONObject(i);
                 String to = ev.optString("to", "");
                 String name = ev.optString("name", "任务");
+                if (isDuplicate(ev, to)) continue;
                 ev.put("ts", System.currentTimeMillis());
                 sHistory.add(ev);
                 if (to.contains("已完成")) {
@@ -141,6 +146,18 @@ public final class NotifyEngine {
         } catch (Exception ignored) {
             // 单条坏数据不至于拖垮引擎
         }
+    }
+
+    private static boolean isDuplicate(JSONObject ev, String to) {
+        String id = ev.optString("id", "");
+        long now = System.currentTimeMillis();
+        for (int i = sHistory.size() - 1, checked = 0; i >= 0 && checked < DEDUP_SCAN; i--, checked++) {
+            JSONObject old = sHistory.get(i);
+            if (!id.equals(old.optString("id", ""))) continue;
+            if (!to.equals(old.optString("to", ""))) continue;
+            if (Math.abs(now - old.optLong("ts", 0)) < DEDUP_WINDOW_MS) return true;
+        }
+        return false;
     }
 
     private static void notifyHistoryListener() {

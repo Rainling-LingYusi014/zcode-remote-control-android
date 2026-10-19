@@ -44,6 +44,7 @@ public class MainActivity extends Activity
     private TextView[] mTabButtons;
     private LinearLayout mBottomBar;
     private HistoryAdapter mAdapter;
+    private TextView mNtfyStatus;
     private int mTab = TAB_PANEL;
     private LinearLayout mRoot;
     private FrameLayout mContent;
@@ -382,6 +383,8 @@ public class MainActivity extends Activity
     @Override
     protected void onResume() {
         super.onResume();
+        // v2 直推：前台保持流式订阅（已开启且配置了 Topic 才真正生效）
+        NtfyReceiver.subscribe(this);
         if (mReturnLock && !mLocked && AppLock.enabled(this) && AppLock.hasPin(this)) {
             lockNow();
         }
@@ -392,6 +395,7 @@ public class MainActivity extends Activity
     protected void onStop() {
         // 真正离开前台才武装重锁；系统弹窗（权限等）的短暂 pause 不触发
         mReturnLock = true;
+        NtfyReceiver.unsubscribe();
         super.onStop();
     }
 
@@ -630,8 +634,30 @@ public class MainActivity extends Activity
         box.setPadding(p, (int) dp(12), p, (int) dp(16));
 
         box.addView(sectionLabel("通知"));
-        box.addView(switchRow("实时模式", "前台服务保持会话在线，事件近实时（更耗电，实验性）",
-                AppSettings.realtime(this), (b, on) -> AppSettings.setRealtime(this, on)));
+        box.addView(switchRow("桌面直推",
+                "电脑端 watcher 实时推送任务状态（v2，取代旧版\"实时模式\"保活，更省电可靠）\n"
+                        + "需在电脑部署 watcher 并填好 Topic，见 README「桌面直推」一节",
+                AppSettings.ntfyOn(this), (b, on) -> {
+                    AppSettings.setNtfyOn(this, on);
+                    if (on) {
+                        NtfyReceiver.subscribe(this);
+                    } else {
+                        NtfyReceiver.unsubscribe();
+                    }
+                    swapSettingsView(buildSettingsView());
+                }));
+        if (AppSettings.ntfyOn(this)) {
+            box.addView(buttonRow("服务器：" + AppSettings.ntfyServer(this), v -> editNtfyServer()));
+            box.addView(buttonRow("Topic：" + AppSettings.ntfyTopicMasked(this)
+                    + "（随机长串=凭据，勿外传）", v -> editNtfyTopic()));
+            box.addView(buttonRow("测试拉取（立即收一次桌面推送）", v -> testNtfyPull()));
+            mNtfyStatus = new TextView(this);
+            mNtfyStatus.setTextColor(0xFF8A97A0);
+            mNtfyStatus.setTextSize(12);
+            mNtfyStatus.setPadding(0, (int) dp(4), 0, 0);
+            mNtfyStatus.setText("上次拉取：" + AppSettings.ntfyLastText(this));
+            box.addView(mNtfyStatus);
+        }
         String range = "每天 " + AppSettings.fmtTime(AppSettings.quietStart(this)) + " – "
                 + AppSettings.fmtTime(AppSettings.quietEnd(this)) + " 只记历史不弹通知 · 点这里改时段";
         LinearLayout quietRow = switchRow("静默时段", range,
@@ -662,9 +688,9 @@ public class MainActivity extends Activity
 
         box.addView(sectionLabel("兜底检查"));
         int cur = AppSettings.intervalMin(this);
-        int sel = cur <= 15 ? 0 : cur <= 30 ? 1 : 2;
-        box.addView(spinnerRow("检查间隔", new String[]{"每 15 分钟", "每 30 分钟", "每 60 分钟"}, sel,
-                pos -> AppSettings.setIntervalMin(this, new int[]{15, 30, 60}[pos])));
+        int sel = cur <= 15 ? 0 : cur <= 30 ? 1 : cur <= 60 ? 2 : 3;
+        box.addView(spinnerRow("检查间隔", new String[]{"每 15 分钟", "每 30 分钟", "每 60 分钟", "每 2 小时"}, sel,
+                pos -> AppSettings.setIntervalMin(this, new int[]{15, 30, 60, 120}[pos])));
         mHeartbeat = new TextView(this);
         mHeartbeat.setTextColor(0xFF8A97A0);
         mHeartbeat.setTextSize(12);
@@ -705,9 +731,9 @@ public class MainActivity extends Activity
             }
         }));
         TextView about = new TextView(this);
-        about.setText("ZCode RC v" + versionName() + " · 本地自用版\n"
+        about.setText("ZRemote v" + versionName() + "\n"
                 + "ZCode 远程控制增强壳 · 非官方项目，与 Z.ai 无隶属关系\n"
-                + "应用图标版权归 Z.ai 所有，仅限本地个人使用");
+                + "本地版图标版权归 Z.ai 所有，仅限本地个人使用");
         about.setTextColor(Theme.textSecondary());
         about.setTextSize(12);
         about.setPadding(0, (int) dp(4), 0, 0);
@@ -811,11 +837,13 @@ public class MainActivity extends Activity
                 + "三、网络通信对象仅限\n"
                 + "· zcode.z.ai（官方远程控制）\n"
                 + "· bigmodel.cn（智谱官方用量页）\n"
+                + "· 你配置的 ntfy 服务器（默认公共 ntfy.sh）：仅当开启\"桌面直推\"时，"
+                + "任务标题（默认为会话首条输入的截断文本）与状态变化经其转发，"
+                + "不含代码/文件/凭据；介意者可自建 ntfy 或关闭该功能\n"
                 + "页面内数据的处理遵循智谱官方隐私条款，本 APP 不经手、不转发、不存储。\n\n"
                 + "四、权限用途\n"
-                + "· 网络：连接上述官方服务\n"
+                + "· 网络：连接上述服务\n"
                 + "· 通知：任务状态提醒\n"
-                + "· 前台服务：实时模式保活（默认关闭）\n"
                 + "· 相机：仅在扫码配对时本地识别二维码，画面不存储、不上传\n\n"
                 + "五、品牌与开源说明\n"
                 + "非官方第三方工具，与 Z.ai 无隶属关系；代码开源时仓库不含官方品牌资产与账号凭据。";
@@ -975,6 +1003,74 @@ public class MainActivity extends Activity
                             : "未注入（页面未加载或已改版）";
                     runOnUiThread(() -> mHeartbeat.append("\n观察器：" + state));
                 });
+    }
+
+    // ---- 桌面直推（v2）设置 ----
+
+    private void editNtfyServer() {
+        final android.widget.EditText et = new android.widget.EditText(this);
+        et.setText(AppSettings.ntfyServer(this));
+        et.setSingleLine(true);
+        wrapDialog(et, "直推服务器", "ntfy 服务器地址。公共服 https://ntfy.sh；自建填自己的地址。")
+                .setPositiveButton("保存", (d, w) -> {
+                    AppSettings.setNtfyServer(this, et.getText().toString());
+                    swapSettingsView(buildSettingsView());
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void editNtfyTopic() {
+        final android.widget.EditText et = new android.widget.EditText(this);
+        et.setText(AppSettings.ntfyTopic(this));
+        et.setSingleLine(true);
+        try {
+            android.content.ClipboardManager cm = (android.content.ClipboardManager)
+                    getSystemService(CLIPBOARD_SERVICE);
+            if (cm.hasPrimaryClip() && cm.getPrimaryClip().getItemAt(0) != null) {
+                CharSequence clip = cm.getPrimaryClip().getItemAt(0).getText();
+                if (clip != null && !clip.toString().isEmpty() && clip.toString().startsWith("zrc-")) {
+                    et.setText(clip); // 剪贴板里有新生成的 topic，直接带出
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        wrapDialog(et, "直推 Topic", "与桌面端 watcher 配置里的 topic 完全一致（随机长串，即凭据，勿外传）。")
+                .setPositiveButton("保存", (d, w) -> {
+                    AppSettings.setNtfyTopic(this, et.getText().toString());
+                    swapSettingsView(buildSettingsView());
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void testNtfyPull() {
+        android.widget.Toast.makeText(this, "拉取中…", android.widget.Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            String msg;
+            try {
+                int n = NtfyReceiver.pollOnce(this);
+                msg = n > 0 ? "拉取成功，收到 " + n + " 条新事件"
+                        : "拉取成功，暂无新事件（先在电脑端 curl /zrc/test 发一条试试）";
+            } catch (Exception e) {
+                msg = "拉取失败：" + e.getMessage();
+            }
+            final String m = msg;
+            runOnUiThread(() -> {
+                android.widget.Toast.makeText(this, m, android.widget.Toast.LENGTH_LONG).show();
+                swapSettingsView(buildSettingsView());
+            });
+        }, "zrc-ntfy-test").start();
+    }
+
+    private android.app.AlertDialog.Builder wrapDialog(
+            android.widget.EditText et, String title, String msg) {
+        FrameLayout wrap = new FrameLayout(this);
+        int pad = (int) dp(20);
+        wrap.setPadding(pad, (int) dp(6), pad, 0);
+        wrap.addView(et, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return new android.app.AlertDialog.Builder(this).setTitle(title).setMessage(msg).setView(wrap);
     }
 
     /** 静默时段编辑：先选开始，再选结束（支持跨零点）。 */
