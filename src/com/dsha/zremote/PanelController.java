@@ -59,6 +59,7 @@ public final class PanelController {
     private static ViewGroup sPillBox;
     private static View sCorner;
     private static View sHelp;
+    private static View sGh;
 
     private PanelController() {}
 
@@ -99,6 +100,23 @@ public final class PanelController {
         helpLp.topMargin = (int) dp(10);
         helpLp.rightMargin = (int) dp(58);
         root.addView(help, helpLp);
+
+        // 帮助钮左侧的 GitHub 仓库入口：与扫码/帮助钮同尺寸同色同显隐
+        android.widget.ImageView gh = new android.widget.ImageView(sCtxWrapper);
+        gh.setImageResource(R.drawable.ic_github);
+        gh.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+        int ghPad = (int) dp(8); // 40dp 视图中留出 24dp 内容区，视觉跨度与另两个图标一致
+        gh.setPadding(ghPad, ghPad, ghPad, ghPad);
+        gh.setContentDescription("GitHub 仓库");
+        gh.setOnClickListener(v -> openExternal(
+                Uri.parse("https://github.com/Rainling-LingYusi014/zcode-remote-control-android")));
+        gh.setVisibility(View.GONE);
+        sGh = gh;
+        FrameLayout.LayoutParams ghLp = new FrameLayout.LayoutParams(
+                (int) dp(40), (int) dp(40), Gravity.TOP | Gravity.END);
+        ghLp.topMargin = (int) dp(10);
+        ghLp.rightMargin = (int) dp(106);
+        root.addView(gh, ghLp);
 
         LinearLayout pills = new LinearLayout(sCtxWrapper);
         pills.setOrientation(LinearLayout.HORIZONTAL);
@@ -181,6 +199,7 @@ public final class PanelController {
     private static void showCorner(boolean show) {
         if (sCorner != null) sCorner.setVisibility(show ? View.VISIBLE : View.GONE);
         if (sHelp != null) sHelp.setVisibility(show ? View.VISIBLE : View.GONE);
+        if (sGh != null) sGh.setVisibility(show ? View.VISIBLE : View.GONE);
     }
 
     /** 右上角 ? 帮助钮：圆环跨度与扫码框四角跨度一致（0.6s），线宽颜色同扫码线条。 */
@@ -285,6 +304,7 @@ public final class PanelController {
         sPillBox = null;
         sCorner = null;
         sHelp = null;
+        sGh = null;
         if (sCtxWrapper != null) {
             sCtxWrapper.setBaseContext(sCtxWrapper.getApplicationContext());
         }
