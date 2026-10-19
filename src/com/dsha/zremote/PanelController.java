@@ -71,13 +71,13 @@ public final class PanelController {
         LinearLayout pills = new LinearLayout(sCtxWrapper);
         pills.setOrientation(LinearLayout.HORIZONTAL);
         pills.setGravity(Gravity.CENTER);
-        pills.addView(buildPillButton("📷 扫码配对", v -> {
+        pills.addView(buildPillButton("扫码配对", v -> {
             if (sOnScan != null) sOnScan.run();
         }));
         LinearLayout.LayoutParams pasteLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         pasteLp.leftMargin = (int) dp(10);
-        pills.addView(buildPillButton("⤓ 粘贴链接", v -> showImportDialog()), pasteLp);
+        pills.addView(buildPillButton("粘贴链接", v -> showImportDialog()), pasteLp);
         pills.setVisibility(View.GONE);
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
