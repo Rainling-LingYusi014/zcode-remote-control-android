@@ -33,6 +33,8 @@ public class MainActivity extends Activity
     private static final int TAB_MESSAGES = 1;
     private static final int TAB_SETTINGS = 2;
     private static final int REQ_NOTIF_PERM = 41;
+    private static final int REQ_CAM_PERM = 42;
+    private static final int REQ_SCAN = 43;
 
     private View mPanelView;
     private ListView mListView;
@@ -62,6 +64,7 @@ public class MainActivity extends Activity
 
         mPanelView = PanelController.obtainView(this);
         PanelController.sOnSearch = () -> showSearch();
+        PanelController.sOnScan = this::startScanPairing;
         mAdapter = new HistoryAdapter();
         mListView = buildListView();
         mSettingsView = buildSettingsView();
@@ -520,6 +523,50 @@ public class MainActivity extends Activity
         }
     }
 
+    // ---- 扫码配对 ----
+
+    private void startScanPairing() {
+        if (checkSelfPermission("android.permission.CAMERA")
+                == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            launchScan();
+        } else {
+            requestPermissions(new String[]{"android.permission.CAMERA"}, REQ_CAM_PERM);
+        }
+    }
+
+    private void launchScan() {
+        try {
+            startActivityForResult(new Intent(this, ScanActivity.class), REQ_SCAN);
+        } catch (Exception e) {
+            android.widget.Toast.makeText(this, "无法启动扫码", android.widget.Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void showRePairDialog() {
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("重新配对")
+                .setMessage("桌面端 ZCode 打开「手机远程控制」显示二维码后，点「扫码配对」对准扫一下即可；\n\n若手机剪贴板里已有配对链接，可选「粘贴链接」。")
+                .setPositiveButton("扫码配对", (d, w) -> startScanPairing())
+                .setNeutralButton("粘贴链接", (d, w) -> PanelController.showImportDialog())
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        if (requestCode == REQ_CAM_PERM) {
+            if (grantResults.length > 0 && grantResults[0]
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                launchScan();
+            } else {
+                android.widget.Toast.makeText(this, "没有相机权限，无法扫码；可用「粘贴链接」代替",
+                        android.widget.Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+    }
+
     @Override
     public void onBackPressed() {
         if (mSearchOverlay != null) {
@@ -548,6 +595,16 @@ public class MainActivity extends Activity
             Uri[] result = (data != null)
                     ? WebChromeClient.FileChooserParams.parseResult(resultCode, data) : null;
             PanelController.deliverFileChooserResult(result);
+            return;
+        }
+        if (requestCode == REQ_SCAN) {
+            if (resultCode == RESULT_OK && data != null) {
+                String url = data.getStringExtra(ScanActivity.EXTRA_URL);
+                if (url != null && !url.isEmpty()) {
+                    showTab(TAB_PANEL);
+                    PanelController.openOrRoute(Uri.parse(url));
+                }
+            }
             return;
         }
         super.onActivityResult(requestCode, resultCode, data);
@@ -616,6 +673,9 @@ public class MainActivity extends Activity
 
         box.addView(sectionLabel("系统权限"));
         box.addView(buttonRow("后台权限引导（MIUI / HyperOS）", v -> showKeepAliveGuide()));
+
+        box.addView(sectionLabel("会话"));
+        box.addView(buttonRow("重新配对（扫码 / 粘贴链接）", v -> showRePairDialog()));
 
         box.addView(sectionLabel("数据"));
         box.addView(buttonRow("清空消息历史", v -> {
@@ -755,7 +815,8 @@ public class MainActivity extends Activity
                 + "四、权限用途\n"
                 + "· 网络：连接上述官方服务\n"
                 + "· 通知：任务状态提醒\n"
-                + "· 前台服务：实时模式保活（默认关闭）\n\n"
+                + "· 前台服务：实时模式保活（默认关闭）\n"
+                + "· 相机：仅在扫码配对时本地识别二维码，画面不存储、不上传\n\n"
                 + "五、品牌与开源说明\n"
                 + "非官方第三方工具，与 Z.ai 无隶属关系；代码开源时仓库不含官方品牌资产与账号凭据。";
         TextView tv = new TextView(this);

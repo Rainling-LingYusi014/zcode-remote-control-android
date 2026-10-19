@@ -3,11 +3,12 @@
 > **非官方项目**：ZRemote 是一个第三方工具，与 Z.ai 及其 ZCode 产品**无任何隶属关系**。
 > "ZCode" 及相关标识的版权归 Z.ai 所有，本项目未获得其赞助或授权。
 
-一个免 Gradle、零第三方依赖的 Android 原生客户端，为 [ZCode](https://zcode.z.ai) 的 Web 远程控制提供增强体验：
-官方二维码配对后即可在手机上查看任务、接收通知、搜索会话——比浏览器标签页更快、更省心。
+一个免 Gradle 的 Android 原生客户端，为 [ZCode](https://zcode.z.ai) 的 Web 远程控制提供增强体验：
+打开 APP 扫桌面端二维码即可配对，之后在手机上查看任务、接收通知、搜索会话——比浏览器标签页更快、更省心。
 
 ## 功能
 
+- **扫码配对**：APP 内直接扫桌面端配对二维码，一步完成连接（也可粘贴链接）
 - **任务面板**：官方远程控制页的沉浸式壳（深/浅色跟随、外链自动外抛、文件上传/下载、断线重试）
 - **会话搜索**：页面内置 🔍 一键搜索全部任务，点击直达对应会话
 - **任务通知**：前台实时监听 + JobScheduler 周期兜底，任务完成/出错分级提醒（支持静默时段）
@@ -18,7 +19,8 @@
 
 ## 构建
 
-零第三方依赖：只需要 JDK（17+）与 Android 构建工具（build-tools 34+ 含 aapt2/d8/apksigner，platform android-35）。
+只需要 JDK（17+）与 Android 构建工具（build-tools 34+ 含 aapt2/d8/apksigner，platform android-35）。
+唯一第三方库为 [ZXing core](https://github.com/zxing/zxing)（Apache-2.0，仅用于扫码配对的二维码解码，约 600KB），构建脚本首次运行时自动下载。
 
 ```bash
 # 1. 准备工具链（目录结构：toolchain/android-14/ 为 build-tools，toolchain/android-35/ 为 platform）
@@ -36,7 +38,8 @@ LOCAL=1 ./build.sh      # 产物 build/zremote-local.apk
 ## 隐私
 
 不收集任何数据：无统计 SDK、无自建服务器，全部数据（会话 Cookie、通知历史、崩溃日志）仅存 APP 私有目录。
-网络通信仅限 zcode.z.ai 与 bigmodel.cn 两个官方域名。完整说明见应用内"设置 → 关于 → 隐私政策"或 [docs/隐私政策.md](docs/隐私政策.md)。
+网络通信仅限 zcode.z.ai 与 bigmodel.cn 两个官方域名；相机仅在扫码配对时本地解码，画面不存储不上传。
+完整说明见应用内"设置 → 关于 → 隐私政策"或 [docs/隐私政策.md](docs/隐私政策.md)。
 
 ## 品牌
 

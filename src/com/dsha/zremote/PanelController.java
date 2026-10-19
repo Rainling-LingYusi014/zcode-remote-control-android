@@ -30,6 +30,7 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -45,7 +46,7 @@ public final class PanelController {
 
     public static final int REQ_FILE_CHOOSER = 4001;
     static final String HOME_URL = "https://zcode.z.ai/";
-    private static final String ALLOWED_HOST = "zcode.z.ai";
+    static final String ALLOWED_HOST = "zcode.z.ai";
 
     private static WebView sWebView;
     private static MutableContextWrapper sCtxWrapper;
@@ -53,11 +54,11 @@ public final class PanelController {
     private static ValueCallback<Uri[]> sFileCb;
     private static boolean sLoadedOnce = false;
     private static SharedPreferences sPrefs;
-    private static Button sImportPill;
+    private static ViewGroup sPillBox;
 
     private PanelController() {}
 
-    /** 取单例 WebView（必要时创建），包进带"导入配对链接"悬浮钮的容器后挂到当前 Activity 上。 */
+    /** 取单例 WebView（必要时创建），包进带"扫码/粘贴导入"悬浮钮的容器后挂到当前 Activity 上。 */
     @SuppressLint("SetJavaScriptEnabled")
     static View obtainView(Activity activity) {
         ensureCreated(activity.getApplicationContext());
@@ -67,17 +68,31 @@ public final class PanelController {
         FrameLayout root = new FrameLayout(sCtxWrapper);
         root.addView(sWebView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        sImportPill = buildImportPill();
+        LinearLayout pills = new LinearLayout(sCtxWrapper);
+        pills.setOrientation(LinearLayout.HORIZONTAL);
+        pills.setGravity(Gravity.CENTER);
+        pills.addView(buildPillButton("📷 扫码配对", v -> {
+            if (sOnScan != null) sOnScan.run();
+        }));
+        LinearLayout.LayoutParams pasteLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        pasteLp.leftMargin = (int) dp(10);
+        pills.addView(buildPillButton("⤓ 粘贴链接", v -> showImportDialog()), pasteLp);
+        pills.setVisibility(View.GONE);
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
         lp.bottomMargin = (int) dp(28);
-        root.addView(sImportPill, lp);
+        root.addView(pills, lp);
+        sPillBox = pills;
         return root;
     }
 
     /** 页面内搜索按钮（注入）→ 桥 → 此处派发到原生浮层。 */
     static Runnable sOnSearch;
+
+    /** 扫码 pill → 派发到 Activity（相机权限申请只能在 Activity 侧做）。 */
+    static Runnable sOnScan;
 
     static void fireSearch() {
         if (sOnSearch == null) return;
@@ -120,17 +135,16 @@ public final class PanelController {
         return sWebView;
     }
 
-    /** 非 zcode.z.ai 页面（首页/错误页）时显示，点击后从剪贴板导入配对链接。 */
-    private static Button buildImportPill() {
+    /** 非 zcode.z.ai 页面（首页/错误页）时显示的底部操作钮（扫码 / 粘贴导入）。 */
+    private static Button buildPillButton(String text, View.OnClickListener l) {
         Button b = new Button(sCtxWrapper);
-        b.setText("⤓ 导入配对链接");
+        b.setText(text);
         b.setAllCaps(false);
         b.setTextSize(13);
         b.setTextColor(0xFFCFD8DC);
         b.setBackgroundColor(0xE6202C33);
         b.setPadding((int) dp(20), (int) dp(8), (int) dp(20), (int) dp(8));
-        b.setOnClickListener(v -> showImportDialog());
-        b.setVisibility(View.GONE);
+        b.setOnClickListener(l);
         return b;
     }
 
@@ -140,7 +154,7 @@ public final class PanelController {
             ViewGroup parent = (ViewGroup) sWebView.getParent();
             if (parent != null) parent.removeView(sWebView);
         }
-        sImportPill = null;
+        sPillBox = null;
         if (sCtxWrapper != null) {
             sCtxWrapper.setBaseContext(sCtxWrapper.getApplicationContext());
         }
@@ -258,14 +272,15 @@ public final class PanelController {
     }
 
     private static void updatePill(String url) {
-        if (sImportPill == null) return;
-        // 远程控制链接带授权特征（token 参数或 /remote、/connect 路径）；官网/营销页一律显示导入钮
+        if (sPillBox == null) return;
+        // 远程控制链接带授权特征（token 参数或 /remote、/connect 路径）；官网/营销页一律显示操作钮
         String u = url == null ? "" : url.toLowerCase();
         boolean onSession = u.contains("token=") || u.contains("/remote") || u.contains("/connect");
-        sImportPill.setVisibility(onSession ? View.GONE : View.VISIBLE);
+        sPillBox.setVisibility(onSession ? View.GONE : View.VISIBLE);
     }
 
-    private static void showImportDialog() {
+    /** 设置页「重新配对 → 粘贴链接」与面板 pill 共用的导入入口。 */
+    static void showImportDialog() {
         if (sActivity == null || sActivity.isFinishing()) return;
         final EditText et = new EditText(sActivity);
         et.setSingleLine(true);
@@ -289,7 +304,7 @@ public final class PanelController {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         new AlertDialog.Builder(sActivity)
                 .setTitle("导入配对链接")
-                .setMessage("桌面端 ZCode 手机图标的对话框里有\"复制链接\"；把链接发到手机（微信/QQ 均可）后复制，回到这里粘贴打开。\n\n一次性设置：系统设置 → 应用管理 → Zcode RC → 默认打开 → 开启\"打开支持的链接\"，之后扫码即可直接进 APP。")
+                .setMessage("最快：桌面端 ZCode 打开「手机远程控制」显示二维码后，用面板底部的「扫码配对」直接扫。\n\n备选：桌面端配对对话框里点\"复制链接\"，把链接发到手机（微信/QQ 均可）后复制，回到这里粘贴打开。\n\n一次性设置：系统设置 → 应用管理 → 本应用 → 默认打开 → 开启\"打开支持的链接\"，之后扫码即可直接进 APP。")
                 .setView(wrap)
                 .setPositiveButton("打开", (d, w) -> {
                     String t = et.getText().toString().trim();

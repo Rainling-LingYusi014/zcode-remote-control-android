@@ -1,4 +1,5 @@
 build/
+build-local/
 tools/build/
 keystore.jks
 keystore-release.jks

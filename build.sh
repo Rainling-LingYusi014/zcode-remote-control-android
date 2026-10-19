@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# 构建 Zcode RC APK（JDK + Android SDK 的 aapt2/d8，无 Gradle、无第三方依赖）
+# 构建 Zcode RC APK（JDK + Android SDK 的 aapt2/d8，无 Gradle；第三方库仅 zxing-core 二维码解码）
 #
 # 依赖（位于 E:\.ZCode\toolchain，见仓库根 README）：
 #   build-tools r34 (aapt2.exe / lib/d8.jar / zipalign.exe / lib/apksigner.jar)
 #   platforms;android-35 (android.jar)
+#   zxing-core-3.5.3.jar（缺失时脚本自动从镜像下载）
 #
 # 用法：./build.sh   产物在 build/zremote.apk
 set -euo pipefail
@@ -28,6 +29,17 @@ APKSIGNER_JAR="$BT/lib/apksigner.jar"
 for f in "$ANDROID_JAR" "$AAPT2" "$D8_JAR" "$ZIPALIGN" "$APKSIGNER_JAR"; do
   [ -f "$f" ] || { echo "缺少构建工具：$f" >&2; exit 1; }
 done
+
+# 二维码识别库（扫码配对用，Apache-2.0，约 600KB）
+ZXING_JAR="$TC/zxing-core-3.5.3.jar"
+if [ ! -f "$ZXING_JAR" ]; then
+  echo "== 0/6 下载 zxing-core-3.5.3.jar"
+  curl -fL --retry 2 -o "$ZXING_JAR" \
+    "https://maven.aliyun.com/repository/public/com/google/zxing/core/3.5.3/core-3.5.3.jar" ||
+    curl -fL --retry 2 -o "$ZXING_JAR" \
+      "https://repo1.maven.org/maven2/com/google/zxing/core/3.5.3/core-3.5.3.jar"
+fi
+[ -f "$ZXING_JAR" ] || { echo "缺少依赖库：$ZXING_JAR" >&2; exit 1; }
 
 OUT="${OUT:-build}"
 # javac 诊断输出统一英文，避免 GBK 乱码
@@ -70,8 +82,10 @@ fi
 echo "== 2/6 javac"
 { find src -name '*.java'
   [ -d "$OUT/gen" ] && find "$OUT/gen" -name '*.java'; } > "$OUT/sources.txt"
+# classpath 拼两条以上时 MSYS 不再自动转 Windows 路径，必须显式归一化（javac 是原生 exe）
+JAVAC_CP="$(cygpath -m "$ANDROID_JAR");$(cygpath -m "$ZXING_JAR")"
 javac -encoding UTF-8 --release 8 -nowarn \
-  -cp "$ANDROID_JAR" -d "$OUT/classes" @"$OUT/sources.txt"
+  -cp "$JAVAC_CP" -d "$OUT/classes" @"$OUT/sources.txt"
 
 echo "== 3/6 d8"
 find "$OUT/classes" -name '*.class' > "$OUT/classes.txt"
@@ -79,7 +93,8 @@ find "$OUT/classes" -name '*.class' > "$OUT/classes.txt"
 R8_JAR="$TC/r8-8.5.35.jar"
 [ -f "$R8_JAR" ] || R8_JAR="$D8_JAR"
 java -cp "$R8_JAR" com.android.tools.r8.D8 \
-  --min-api 29 --lib "$ANDROID_JAR" --output "$OUT/dex" @"$OUT/classes.txt"
+  --min-api 29 --lib "$ANDROID_JAR" --output "$OUT/dex" \
+  "$ZXING_JAR" @"$OUT/classes.txt"
 
 echo "== 4/6 注入 classes.dex"
 mkdir -p tools/build
