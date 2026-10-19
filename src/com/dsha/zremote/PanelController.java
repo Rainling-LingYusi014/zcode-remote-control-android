@@ -83,6 +83,18 @@ public final class PanelController {
         cornerLp.rightMargin = (int) dp(10);
         root.addView(corner, cornerLp);
 
+        // 扫码钮下方的小字：注明浏览器分享这条备选配对路径
+        TextView cornerCap = new TextView(sCtxWrapper);
+        cornerCap.setText("也可在浏览器打开链接后分享导入");
+        cornerCap.setTextSize(10);
+        cornerCap.setTextColor(0x8CCFD8DC);
+        FrameLayout.LayoutParams capLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.END);
+        capLp.topMargin = (int) dp(56);
+        capLp.rightMargin = (int) dp(8);
+        root.addView(cornerCap, capLp);
+
         LinearLayout pills = new LinearLayout(sCtxWrapper);
         pills.setOrientation(LinearLayout.HORIZONTAL);
         pills.setGravity(Gravity.CENTER);
@@ -98,12 +110,6 @@ public final class PanelController {
         pillBox.setOrientation(LinearLayout.VERTICAL);
         pillBox.setGravity(Gravity.CENTER);
         pillBox.addView(pills);
-        TextView hint = new TextView(sCtxWrapper);
-        hint.setText("也可在浏览器打开配对链接后，点\"分享\"选本应用导入");
-        hint.setTextSize(11);
-        hint.setTextColor(0x99CFD8DC);
-        hint.setPadding(0, (int) dp(8), 0, 0);
-        pillBox.addView(hint);
         pillBox.setVisibility(View.GONE);
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -174,7 +180,7 @@ public final class PanelController {
         return b;
     }
 
-    /** 右上角常驻扫码钮：手绘二维码图形，半透明深色圆角底，深浅主题下都可见。 */
+    /** 右上角常驻扫码钮：四角取景框 + 中间扫线的"扫描"图形，半透明深色圆角底，深浅主题下都可见。 */
     private static final class QrScanIconView extends View {
         private final Paint mPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
@@ -190,18 +196,22 @@ public final class PanelController {
             mPaint.setColor(0x8C141A20);
             cv.drawRoundRect(0, 0, s, s, s * 0.22f, s * 0.22f, mPaint);
             mPaint.setColor(0xE6CFD8DC);
-            float m = s * 0.24f;
-            float u = (s - 2 * m) / 4f;
             mPaint.setStyle(Paint.Style.STROKE);
-            mPaint.setStrokeWidth(Math.max(1.5f, s * 0.055f));
-            // 三个"回"字定位角 + 右下两点，拼出二维码的标志性形状
-            cv.drawRect(m, m, m + 2 * u, m + 2 * u, mPaint);
-            cv.drawRect(s - m - 2 * u, m, s - m, m + 2 * u, mPaint);
-            cv.drawRect(m, s - m - 2 * u, m + 2 * u, s - m, mPaint);
-            mPaint.setStyle(Paint.Style.FILL);
-            float x = s - m - 2 * u, y = s - m - 2 * u;
-            cv.drawRect(x, y, x + u, y + u, mPaint);
-            cv.drawRect(x + u, y + u, x + 2 * u, y + 2 * u, mPaint);
+            mPaint.setStrokeWidth(Math.max(1.5f, s * 0.06f));
+            mPaint.setStrokeCap(Paint.Cap.ROUND);
+            float m = s * 0.20f;
+            float a = s * 0.22f; // 取景角臂长
+            // 四角取景框
+            cv.drawLine(m, m + a, m, m, mPaint);
+            cv.drawLine(m, m, m + a, m, mPaint);
+            cv.drawLine(s - m - a, m, s - m, m, mPaint);
+            cv.drawLine(s - m, m, s - m, m + a, mPaint);
+            cv.drawLine(m, s - m, m + a, s - m, mPaint);
+            cv.drawLine(m, s - m - a, m, s - m, mPaint);
+            cv.drawLine(s - m - a, s - m, s - m, s - m, mPaint);
+            cv.drawLine(s - m, s - m - a, s - m, s - m, mPaint);
+            // 中间扫线
+            cv.drawLine(m + a * 0.5f, s / 2f, s - m - a * 0.5f, s / 2f, mPaint);
         }
     }
 
