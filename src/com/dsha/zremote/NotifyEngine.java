@@ -274,11 +274,19 @@ public final class NotifyEngine {
         "try{bg=getComputedStyle(document.documentElement).backgroundColor;}catch(e){}}" +
         "var m=/rgba?\\((\\d+)[, ]+(\\d+)[, ]+(\\d+)/.exec(bg||'');" +
         "if(!m)return true;var lum=0.299*m[1]+0.587*m[2]+0.114*m[3];return lum<140;}" +
-        "var lastTheme=null;var pwLast=null;" +
-        "function pairWait(){var t=document.body?document.body.innerText:'';" +
-        "var w=t.indexOf('等待桌面端')>=0;if(w!==pwLast){pwLast=w;" +
-        "try{window.zrcBridge.onPairingWait(w);}catch(e){}}}" +
-        "function checkTheme(){pairWait();var d=themeNow();if(d!==lastTheme){lastTheme=d;" +
+        "var lastTheme=null;var pwLast=null;var pwTs=0;var pwObs=false;" +
+        // 断连/失效各状态文案都纳入检测；800ms 节流，MutationObserver 触发保证秒级响应。
+        // 注意：不能加"二维码失效"——官方会话页常驻横幅里就有这四个字，会误报常显
+        "function pairWait(){var n=Date.now();if(n-pwTs<800)return;pwTs=n;" +
+        "var t=document.body?document.body.innerText:'';" +
+        "var w=t.indexOf('等待桌面端')>=0||t.indexOf('连接中断')>=0||t.indexOf('校验失败')>=0" +
+        "||t.indexOf('链接已失效')>=0||t.indexOf('连接已断开')>=0;" +
+        "if(w!==pwLast){pwLast=w;try{window.zrcBridge.onPairingWait(w);}catch(e){}}}" +
+        "function pwWatch(){if(pwObs||!document.body)return;" +
+        "try{new MutationObserver(function(){pairWait();}).observe(document.body," +
+        "{childList:true,subtree:true,characterData:true});pwObs=true;}catch(e){}}" +
+        "setInterval(function(){pwWatch();pairWait();},1000);pwWatch();pairWait();" +
+        "function checkTheme(){var d=themeNow();if(d!==lastTheme){lastTheme=d;" +
         "try{window.zrcBridge.onTheme(d);}catch(e){}}}" +
         "window.__zrcOpenTask = function(tid){try{var c=document.querySelector('[data-testid=\"'+tid+'\"]');" +
         "if(c){c.click();return 'ok';}return 'nolist';}catch(e){return 'err';}};" +

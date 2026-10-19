@@ -58,7 +58,7 @@ public final class PanelController {
     private static SharedPreferences sPrefs;
     private static ViewGroup sPillBox;
     private static View sCorner;
-    private static TextView sCornerCap;
+    private static View sHelp;
 
     private PanelController() {}
 
@@ -73,8 +73,8 @@ public final class PanelController {
         root.addView(sWebView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        // 右上角常驻扫码钮：桌面端刷新二维码作废旧会话时（URL 仍是 /remote、底部按钮隐藏），随时可重连。
-        // 平时隐藏（避免遮挡正常界面），仅当注入脚本回报"等待桌面端配对"时出现
+        // 右上角扫码钮：桌面端刷新二维码作废旧会话时随时可重连。
+        // 平时隐藏（避免遮挡正常界面），注入脚本检测到"等待配对/连接中断/校验失败"等状态时出现
         View corner = new QrScanIconView(sCtxWrapper);
         corner.setContentDescription("扫码配对");
         corner.setOnClickListener(v -> {
@@ -88,19 +88,26 @@ public final class PanelController {
         cornerLp.rightMargin = (int) dp(10);
         root.addView(corner, cornerLp);
 
-        // 扫码钮下方的小字：注明浏览器分享这条备选配对路径，与扫码钮同显隐
-        TextView cornerCap = new TextView(sCtxWrapper);
-        cornerCap.setText("也可在浏览器打开链接后分享导入");
-        cornerCap.setTextSize(10);
-        cornerCap.setTextColor(0x8CCFD8DC);
-        cornerCap.setVisibility(View.GONE);
-        sCornerCap = cornerCap;
-        FrameLayout.LayoutParams capLp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP | Gravity.END);
-        capLp.topMargin = (int) dp(56);
-        capLp.rightMargin = (int) dp(8);
-        root.addView(cornerCap, capLp);
+        // 扫码钮左侧的 ? 帮助钮：点开看完整的配对/重连方式说明，与扫码钮同显隐
+        TextView help = new TextView(sCtxWrapper);
+        help.setText("?");
+        help.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        help.setTextSize(16);
+        help.setTextColor(0xE6CFD8DC);
+        help.setGravity(Gravity.CENTER);
+        android.graphics.drawable.GradientDrawable helpBg = new android.graphics.drawable.GradientDrawable();
+        helpBg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        helpBg.setColor(0x00000000);
+        helpBg.setStroke((int) dp(2), 0xE6CFD8DC); // 圆环与问号同色
+        help.setBackground(helpBg);
+        help.setOnClickListener(v -> showPairHelp());
+        help.setVisibility(View.GONE);
+        sHelp = help;
+        FrameLayout.LayoutParams helpLp = new FrameLayout.LayoutParams(
+                (int) dp(40), (int) dp(40), Gravity.TOP | Gravity.END);
+        helpLp.topMargin = (int) dp(10);
+        helpLp.rightMargin = (int) dp(58);
+        root.addView(help, helpLp);
 
         LinearLayout pills = new LinearLayout(sCtxWrapper);
         pills.setOrientation(LinearLayout.HORIZONTAL);
@@ -182,7 +189,26 @@ public final class PanelController {
 
     private static void showCorner(boolean show) {
         if (sCorner != null) sCorner.setVisibility(show ? View.VISIBLE : View.GONE);
-        if (sCornerCap != null) sCornerCap.setVisibility(show ? View.VISIBLE : View.GONE);
+        if (sHelp != null) sHelp.setVisibility(show ? View.VISIBLE : View.GONE);
+    }
+
+    /** 右上角 ? 帮助钮：完整列出全部配对/重连方式与适用场景。 */
+    private static void showPairHelp() {
+        if (sActivity == null || sActivity.isFinishing()) return;
+        new AlertDialog.Builder(sActivity)
+                .setTitle("配对与重连指南")
+                .setMessage("【方式一 · 扫码（推荐）】\n"
+                        + "桌面端 ZCode 点手机图标出示二维码 → 回本应用点右上角扫码钮，对准扫一下，识别后自动进入会话。\n\n"
+                        + "【方式二 · 复制链接】\n"
+                        + "桌面端配对对话框点「复制链接」→ 通过微信/QQ 发到手机 → 复制该链接 → 回本应用点底部「粘贴链接」。\n\n"
+                        + "【方式三 · 浏览器分享】\n"
+                        + "在手机浏览器打开配对链接 → 浏览器菜单点「分享」→ 选择本应用，一步导入。\n\n"
+                        + "【方式四 · 链接直达（一次性设置）】\n"
+                        + "系统设置 → 应用管理 → 本应用 → 默认打开 → 开启「打开支持的链接」。此后手机扫码会直接唤起本应用。\n\n"
+                        + "【何时需要重新配对？】\n"
+                        + "桌面端刷新二维码或重开会话后旧链接立即失效。手机端出现\"等待桌面端配对\"、\"连接中断\"、\"校验失败\"等提示时，点右上角扫码钮扫新二维码即可恢复；右上角按钮只在异常状态下出现，不会遮挡正常界面。")
+                .setPositiveButton("知道了", null)
+                .show();
     }
 
     /** 非 zcode.z.ai 页面（首页/错误页）时显示的底部操作钮（扫码 / 粘贴导入）。 */
@@ -241,7 +267,7 @@ public final class PanelController {
         }
         sPillBox = null;
         sCorner = null;
-        sCornerCap = null;
+        sHelp = null;
         if (sCtxWrapper != null) {
             sCtxWrapper.setBaseContext(sCtxWrapper.getApplicationContext());
         }
@@ -508,6 +534,7 @@ public final class PanelController {
     }
 
     private static void showErrorPage(WebView v, String msg) {
+        showCorner(true); // 会话页整页加载失败＝很可能旧链接已失效，亮出扫码钮供直接重配
         String html = "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
                 + "<style>body{background:#101418;color:#cfd8dc;font-family:sans-serif;"
                 + "display:flex;align-items:center;justify-content:center;height:92%;margin:0}"
