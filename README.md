@@ -1,0 +1,49 @@
+# ZRemote
+
+> **非官方项目**：ZRemote 是一个第三方工具，与 Z.ai 及其 ZCode 产品**无任何隶属关系**。
+> "ZCode" 及相关标识的版权归 Z.ai 所有，本项目未获得其赞助或授权。
+
+一个免 Gradle、零第三方依赖的 Android 原生客户端，为 [ZCode](https://zcode.z.ai) 的 Web 远程控制提供增强体验：
+官方二维码配对后即可在手机上查看任务、接收通知、搜索会话——比浏览器标签页更快、更省心。
+
+## 功能
+
+- **任务面板**：官方远程控制页的沉浸式壳（深/浅色跟随、外链自动外抛、文件上传/下载、断线重试）
+- **会话搜索**：页面内置 🔍 一键搜索全部任务，点击直达对应会话
+- **任务通知**：前台实时监听 + JobScheduler 周期兜底，任务完成/出错分级提醒（支持静默时段）
+- **消息历史**：通知可追溯，本地存储，随用随清
+- **应用锁**：PIN + 指纹（系统 BiometricPrompt），保护会话入口
+- **用量入口**：内嵌智谱官方用量页，登录一次常驻可见
+- **崩溃日志**：本地落盘、应用内查看
+
+## 构建
+
+零第三方依赖：只需要 JDK（17+）与 Android 构建工具（build-tools 34+ 含 aapt2/d8/apksigner，platform android-35）。
+
+```bash
+# 1. 准备工具链（目录结构：toolchain/android-14/ 为 build-tools，toolchain/android-35/ 为 platform）
+#    默认路径为项目同级 ../toolchain，可用环境变量 ZREMOTE_TOOLCHAIN 覆盖
+
+# 2. 构建
+./build.sh              # 产物 build/zremote-release.apk
+
+# 本地自用模式（可选）：应用名 ZCode RC + branding-local/ 下的自定义图标
+LOCAL=1 ./build.sh      # 产物 build/zremote-local.apk
+```
+
+首次构建会自动生成本地签名密钥（`keystore*.jks`，不入库，请自行保管——**发布后更换签名将导致用户无法升级**）。
+
+## 隐私
+
+不收集任何数据：无统计 SDK、无自建服务器，全部数据（会话 Cookie、通知历史、崩溃日志）仅存 APP 私有目录。
+网络通信仅限 zcode.z.ai 与 bigmodel.cn 两个官方域名。完整说明见应用内"设置 → 关于 → 隐私政策"或 [docs/隐私政策.md](docs/隐私政策.md)。
+
+## 品牌
+
+- 本项目名称、图标均为原创，与 Z.ai 官方产品存在差异
+- 请勿在本仓库或分发版中包含 Z.ai 官方图标、商标等品牌资产
+- 分发/二改请保留 README 中的非官方声明
+
+## License
+
+[Apache-2.0](LICENSE)

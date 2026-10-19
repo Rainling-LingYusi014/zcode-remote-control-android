@@ -1,0 +1,9 @@
+build/
+tools/build/
+keystore.jks
+keystore-release.jks
+凭据_签名.md
+branding-local/
+*.log
+*.tmp
+.DS_Store

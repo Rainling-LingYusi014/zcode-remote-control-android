@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 通知小图标：块状 Z（系统会自动单色化） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4,4 L20,4 L20,7.2 L9.2,16.8 L20,16.8 L20,20 L4,20 L4,16.8 L14.8,7.2 L4,7.2 Z" />
+</vector>
