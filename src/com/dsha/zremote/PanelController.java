@@ -57,6 +57,8 @@ public final class PanelController {
     private static boolean sLoadedOnce = false;
     private static SharedPreferences sPrefs;
     private static ViewGroup sPillBox;
+    private static View sCorner;
+    private static TextView sCornerCap;
 
     private PanelController() {}
 
@@ -71,23 +73,28 @@ public final class PanelController {
         root.addView(sWebView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        // 右上角常驻扫码钮：桌面端刷新二维码作废旧会话时（URL 仍是 /remote、底部按钮隐藏），随时可重连
+        // 右上角常驻扫码钮：桌面端刷新二维码作废旧会话时（URL 仍是 /remote、底部按钮隐藏），随时可重连。
+        // 平时隐藏（避免遮挡正常界面），仅当注入脚本回报"等待桌面端配对"时出现
         View corner = new QrScanIconView(sCtxWrapper);
         corner.setContentDescription("扫码配对");
         corner.setOnClickListener(v -> {
             if (sOnScan != null) sOnScan.run();
         });
+        corner.setVisibility(View.GONE);
+        sCorner = corner;
         FrameLayout.LayoutParams cornerLp = new FrameLayout.LayoutParams(
                 (int) dp(40), (int) dp(40), Gravity.TOP | Gravity.END);
         cornerLp.topMargin = (int) dp(10);
         cornerLp.rightMargin = (int) dp(10);
         root.addView(corner, cornerLp);
 
-        // 扫码钮下方的小字：注明浏览器分享这条备选配对路径
+        // 扫码钮下方的小字：注明浏览器分享这条备选配对路径，与扫码钮同显隐
         TextView cornerCap = new TextView(sCtxWrapper);
         cornerCap.setText("也可在浏览器打开链接后分享导入");
         cornerCap.setTextSize(10);
         cornerCap.setTextColor(0x8CCFD8DC);
+        cornerCap.setVisibility(View.GONE);
+        sCornerCap = cornerCap;
         FrameLayout.LayoutParams capLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP | Gravity.END);
@@ -167,6 +174,17 @@ public final class PanelController {
         return sWebView;
     }
 
+    /** 注入脚本回报"等待桌面端配对"：仅死会话/等待页显示右上角扫码钮，正常界面不遮挡。JS 桥线程调用。 */
+    static void onPairingWait(boolean waiting) {
+        android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
+        h.post(() -> showCorner(waiting));
+    }
+
+    private static void showCorner(boolean show) {
+        if (sCorner != null) sCorner.setVisibility(show ? View.VISIBLE : View.GONE);
+        if (sCornerCap != null) sCornerCap.setVisibility(show ? View.VISIBLE : View.GONE);
+    }
+
     /** 非 zcode.z.ai 页面（首页/错误页）时显示的底部操作钮（扫码 / 粘贴导入）。 */
     private static Button buildPillButton(String text, View.OnClickListener l) {
         Button b = new Button(sCtxWrapper);
@@ -222,6 +240,8 @@ public final class PanelController {
             if (parent != null) parent.removeView(sWebView);
         }
         sPillBox = null;
+        sCorner = null;
+        sCornerCap = null;
         if (sCtxWrapper != null) {
             sCtxWrapper.setBaseContext(sCtxWrapper.getApplicationContext());
         }

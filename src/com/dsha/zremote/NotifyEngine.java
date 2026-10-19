@@ -107,6 +107,12 @@ public final class NotifyEngine {
             Theme.set(app(), dark);
         }
 
+        /** 注入脚本回报"等待桌面端配对"状态（死会话等待页），原生据此显隐右上角扫码钮。 */
+        @JavascriptInterface
+        public void onPairingWait(boolean waiting) {
+            PanelController.onPairingWait(waiting);
+        }
+
         @JavascriptInterface
         public void onSearch() {
             PanelController.fireSearch();
@@ -268,8 +274,11 @@ public final class NotifyEngine {
         "try{bg=getComputedStyle(document.documentElement).backgroundColor;}catch(e){}}" +
         "var m=/rgba?\\((\\d+)[, ]+(\\d+)[, ]+(\\d+)/.exec(bg||'');" +
         "if(!m)return true;var lum=0.299*m[1]+0.587*m[2]+0.114*m[3];return lum<140;}" +
-        "var lastTheme=null;" +
-        "function checkTheme(){var d=themeNow();if(d!==lastTheme){lastTheme=d;" +
+        "var lastTheme=null;var pwLast=null;" +
+        "function pairWait(){var t=document.body?document.body.innerText:'';" +
+        "var w=t.indexOf('等待桌面端')>=0;if(w!==pwLast){pwLast=w;" +
+        "try{window.zrcBridge.onPairingWait(w);}catch(e){}}}" +
+        "function checkTheme(){pairWait();var d=themeNow();if(d!==lastTheme){lastTheme=d;" +
         "try{window.zrcBridge.onTheme(d);}catch(e){}}}" +
         "window.__zrcOpenTask = function(tid){try{var c=document.querySelector('[data-testid=\"'+tid+'\"]');" +
         "if(c){c.click();return 'ok';}return 'nolist';}catch(e){return 'err';}};" +
