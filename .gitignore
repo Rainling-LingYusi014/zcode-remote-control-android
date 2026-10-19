@@ -8,3 +8,5 @@ branding-local/
 *.log
 *.tmp
 .DS_Store
+.keystore-pass
+.keystore-pass.local

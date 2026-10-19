@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 构建 Zcode RC APK（JDK + Android SDK 的 aapt2/d8，无 Gradle；第三方库仅 zxing-core 二维码解码）
 #
-# 依赖（位于 E:\.ZCode\toolchain，见仓库根 README）：
+# 依赖（默认取仓库同级目录 ../toolchain，可用环境变量 ZREMOTE_TOOLCHAIN 覆盖；见 README）：
 #   build-tools r34 (aapt2.exe / lib/d8.jar / zipalign.exe / lib/apksigner.jar)
 #   platforms;android-35 (android.jar)
 #   zxing-core-3.5.3.jar（缺失时脚本自动从镜像下载）
@@ -105,26 +105,28 @@ echo "== 5/6 zipalign"
 "$ZIPALIGN" -f 4 "$OUT/base.apk" "$OUT/aligned.apk"
 
 echo "== 6/6 签名"
+# 签名密码不入库：优先环境变量 ZREMOTE_KS_PASS，其次本地密码文件（已 gitignore），首次构建随机生成
 if [ "$LOCAL" = "1" ]; then
-  KS_FILE="keystore.jks"; KS_ALIAS="zremote"; KS_PASS="zrczrczrc"
+  KS_FILE="keystore.jks"; KS_ALIAS="zremote"; KS_PASS_FILE="$HERE/.keystore-pass.local"
   KS_DNAME="CN=ZCode RC, O=DSHA, C=CN"
   OUT_APK="$OUT/zremote-local.apk"
-  if [ ! -f keystore.jks ]; then
-    "$KEYTOOL" -genkeypair -keystore keystore.jks -alias zremote -keyalg RSA -keysize 2048 \
-      -validity 10000 -storepass zrczrczrc -keypass zrczrczrc \
-      -dname "$KS_DNAME" >/dev/null 2>&1
-  fi
 else
-  KS_FILE="keystore-release.jks"; KS_ALIAS="zremote-release"; KS_PASS="ZRemote-rel-2026"
+  KS_FILE="keystore-release.jks"; KS_ALIAS="zremote-release"; KS_PASS_FILE="$HERE/.keystore-pass"
   KS_DNAME="CN=ZRemote, O=DSHA, C=CN"
   OUT_APK="$OUT/zremote-release.apk"
-  if [ ! -f keystore-release.jks ]; then
-    "$KEYTOOL" -genkeypair -keystore keystore-release.jks -alias zremote-release \
-      -keyalg RSA -keysize 2048 -validity 10000 \
-      -storepass "$KS_PASS" -keypass "$KS_PASS" \
-      -dname "$KS_DNAME" >/dev/null 2>&1
-    echo "  首次构建：生成发行签名 keystore-release.jks（务必备份，凭据见 凭据_签名.md）"
+fi
+KS_PASS="${ZREMOTE_KS_PASS:-$(cat "$KS_PASS_FILE" 2>/dev/null || true)}"
+if [ ! -f "$KS_FILE" ]; then
+  if [ -z "$KS_PASS" ]; then
+    KS_PASS="$(openssl rand -hex 16 2>/dev/null || head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    printf '%s' "$KS_PASS" > "$KS_PASS_FILE"
   fi
+  "$KEYTOOL" -genkeypair -keystore "$KS_FILE" -alias "$KS_ALIAS" -keyalg RSA -keysize 2048 \
+    -validity 10000 -storepass "$KS_PASS" -keypass "$KS_PASS" \
+    -dname "$KS_DNAME" >/dev/null 2>&1
+  [ "$LOCAL" = "1" ] || echo "  首次构建：生成发行签名 $KS_FILE（密码已存 $KS_PASS_FILE，务必冷备份，发布后不可更换）"
+else
+  [ -n "$KS_PASS" ] || { echo "缺少签名密码：设环境变量 ZREMOTE_KS_PASS 或写入 $KS_PASS_FILE" >&2; exit 1; }
 fi
 java -jar "$APKSIGNER_JAR" sign \
   --ks "$KS_FILE" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KS_PASS" \
