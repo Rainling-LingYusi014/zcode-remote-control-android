@@ -579,9 +579,72 @@ public class MainActivity extends Activity
             showTab(TAB_PANEL);
         } else if (PanelController.canGoBack()) {
             PanelController.goBack();
+        } else if (android.os.SystemClock.uptimeMillis() - mExitArmAt < EXIT_ARM_MS) {
+            exitAppNow();
         } else {
-            super.onBackPressed();
+            exitTipShow();
         }
+    }
+
+    // ---- 退出拦截：主界面按返回不直接退出，先弹小提示；5 秒窗口内再按才真正退出 ----
+
+    private TextView mExitTip;
+    private long mExitArmAt;
+    private static final long EXIT_ARM_MS = 5000;
+
+    private void exitTipShow() {
+        mExitArmAt = android.os.SystemClock.uptimeMillis();
+        if (mExitTip != null) { // 防御：窗口(5s)比提示寿命(3s)长，理论上不会走到
+            mContent.removeCallbacks(mExitFadeStart);
+            mExitTip.animate().cancel();
+            mExitTip.setAlpha(1f);
+            return;
+        }
+        TextView tip = new TextView(this);
+        tip.setText("再次操作退出应用");
+        tip.setTextColor(0xFFFFFFFF);
+        tip.setTextSize(14);
+        int ph = (int) dp(18), pv = (int) dp(10);
+        tip.setPadding(ph, pv, ph, pv);
+        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+        bg.setColor(0xFF0A0E12); // 比 ZCode 深色底 #101418 略深一档的同色系灰，非纯黑；不随主题变
+        bg.setCornerRadius(dp(12));
+        tip.setBackground(bg);
+        mExitTip = tip;
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM);
+        int h = mContent.getHeight();
+        lp.bottomMargin = h > 0 ? (int) (h * 0.25f) : (int) dp(160); // 屏幕中下部
+        mContent.addView(tip, lp);
+        mContent.postDelayed(mExitFadeStart, 2000); // 前 2s 全不透明
+    }
+
+    private final Runnable mExitFadeStart = new Runnable() {
+        @Override
+        public void run() {
+            if (mExitTip == null) return;
+            mExitTip.animate().alpha(0f).setDuration(1000) // 第 3s 渐隐归零
+                    .setListener(new android.animation.AnimatorListenerAdapter() {
+                        @Override
+                        public void onAnimationEnd(android.animation.Animator a) {
+                            if (mExitTip != null) {
+                                mContent.removeView(mExitTip);
+                                mExitTip = null;
+                            }
+                        }
+                    }).start();
+        }
+    };
+
+    private void exitAppNow() {
+        if (mExitTip != null) {
+            mContent.removeCallbacks(mExitFadeStart);
+            mExitTip.animate().cancel();
+            mContent.removeView(mExitTip);
+            mExitTip = null;
+        }
+        finishAffinity();
     }
 
     @Override
@@ -618,6 +681,10 @@ public class MainActivity extends Activity
     protected void onDestroy() {
         NotifyEngine.setHistoryListener(null);
         Theme.setListener(null);
+        if (mExitTip != null) { // 清掉退出提示的渐隐回调/动画，避免销毁期再触碰视图树
+            mContent.removeCallbacks(mExitFadeStart);
+            mExitTip.animate().cancel();
+        }
         // WebView 是全进程单例：只从视图树摘下，不销毁，下次启动复用同一会话
         PanelController.detach();
         super.onDestroy();
