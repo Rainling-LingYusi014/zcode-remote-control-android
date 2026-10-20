@@ -307,6 +307,16 @@ public final class NotifyEngine {
         "try{new MutationObserver(function(){pairWait();}).observe(document.body," +
         "{childList:true,subtree:true,characterData:true});pwObs=true;}catch(e){}}" +
         "setInterval(function(){pwWatch();pairWait();},1000);pwWatch();pairWait();" +
+        // 页面自愈：官方页断连后出现"重新连接/重连"类按钮时自动点击（等价于用户手动点），
+        // 10s 节流防连点。聊天正文不是 button 元素，不会误触。
+        "var recoLast=0;" +
+        "function autoReconnect(){var n=Date.now();if(n-recoLast<10000)return;" +
+        "var bs=document.querySelectorAll('button');" +
+        "for(var i=0;i<bs.length;i++){" +
+        "var t=(bs[i].textContent||'').replace(/\\s+/g,'');" +
+        "if(t.length>=2&&t.length<=12&&(t.indexOf('重新连接')===0||t==='重连'||t.indexOf('重试连接')===0)){" +
+        "recoLast=n;bs[i].click();break;}}}" +
+        "setInterval(autoReconnect,3000);" +
         "function checkTheme(){var d=themeNow();if(d!==lastTheme){lastTheme=d;" +
         "try{window.zrcBridge.onTheme(d);}catch(e){}}}" +
         "window.__zrcOpenTask = function(tid){try{var c=document.querySelector('[data-testid=\"'+tid+'\"]');" +
