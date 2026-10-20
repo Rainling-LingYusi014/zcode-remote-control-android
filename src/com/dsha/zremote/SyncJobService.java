@@ -52,12 +52,16 @@ public class SyncJobService extends JobService {
         return true;
     }
 
-    /** 全量兜底：拉起离屏 WebView 让注入脚本自己 diff（v1 行为，原样保留）。 */
+    /**
+     * 全量兜底：拉起离屏 WebView 让注入脚本自己 diff（v1 行为，原样保留）。
+     * WebView 的创建与操作必须整体落在主线程（审查 P2-1）：无 Looper 的 Job 线程上
+     * new WebView 会抛 RuntimeException，冷进程+离线时曾形成崩溃循环。
+     */
     private void runFull(Context app, JobParameters params) {
-        PanelController.ensureCreated(app);
-        WebView wv = PanelController.webview();
-        if (wv != null) {
-            Runnable kick = () -> {
+        mHandler.post(() -> {
+            PanelController.ensureCreated(app);
+            WebView wv = PanelController.webview();
+            if (wv != null) {
                 try {
                     String cur = wv.getUrl();
                     if (cur != null && cur.contains("/remote")) {
@@ -68,13 +72,8 @@ public class SyncJobService extends JobService {
                     }
                 } catch (Exception ignored) {
                 }
-            };
-            if (Looper.myLooper() == Looper.getMainLooper()) {
-                kick.run();
-            } else {
-                mHandler.post(kick);
             }
-        }
+        });
 
         mFinish = () -> {
             AppSettings.setLastCheck(app, System.currentTimeMillis(), "完成");

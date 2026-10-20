@@ -40,11 +40,8 @@ public class UsageActivity extends Activity {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest req) {
                 Uri u = req.getUrl();
-                String host = u.getHost() == null ? "" : u.getHost();
-                // 仅允许智谱系域名留在页内，其余抛给系统浏览器
-                if (host.equals("bigmodel.cn") || host.endsWith(".bigmodel.cn")
-                        || host.equals("z.ai") || host.endsWith(".z.ai")
-                        || host.equals("open.bigmodel.cn")) {
+                // 仅允许智谱/z.ai 系域名留在页内（复用主面板白名单），其余抛给系统浏览器
+                if (PanelController.inAppHost(u.getHost())) {
                     return false;
                 }
                 try {
@@ -56,6 +53,22 @@ public class UsageActivity extends Activity {
         });
         wv.loadUrl(USAGE_URL);
         setContentView(wv);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // 应用锁旁路封堵（审查 P3-2）：本页持有 bigmodel 登录态，主界面已武装重锁时
+        // 不允许借"Home 后重进停在用量页"绕过 PIN。锁未武装时正常使用。
+        if (MainActivity.sLockRequired) finish();
+    }
+
+    @Override
+    protected void onDestroy() {
+        // 本页 WebView 随 Activity 生命周期走（与主面板的全进程单例不同），销毁即释放
+        WebView wv = findWebView();
+        if (wv != null) wv.destroy();
+        super.onDestroy();
     }
 
     @Override

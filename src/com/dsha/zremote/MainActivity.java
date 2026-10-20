@@ -242,11 +242,14 @@ public class MainActivity extends Activity
     private View mLockOverlay;
     private boolean mReturnLock = false;
     private boolean mLocked = false;
+    /** 进程级锁需求标记：用量页（栈顶时）据此自查，堵住"Home 后重进停在用量页绕过 PIN"的旁路。 */
+    static volatile boolean sLockRequired = false;
     private android.os.CancellationSignal mBiometricSignal;
 
     private void lockNow() {
         if (mLocked) return;
         mLocked = true;
+        sLockRequired = true;
         if (mLockOverlay != null) mRoot.removeView(mLockOverlay);
         mLockOverlay = buildLockOverlay();
         mRoot.addView(mLockOverlay, new FrameLayout.LayoutParams(
@@ -258,6 +261,7 @@ public class MainActivity extends Activity
 
     private void unlockNow() {
         mLocked = false;
+        sLockRequired = false;
         if (mLockOverlay != null) {
             mRoot.removeView(mLockOverlay);
             mLockOverlay = null;
@@ -395,6 +399,7 @@ public class MainActivity extends Activity
     protected void onStop() {
         // 真正离开前台才武装重锁；系统弹窗（权限等）的短暂 pause 不触发
         mReturnLock = true;
+        if (AppLock.enabled(this) && AppLock.hasPin(this)) sLockRequired = true;
         NtfyReceiver.unsubscribe();
         super.onStop();
     }
@@ -679,14 +684,15 @@ public class MainActivity extends Activity
 
     @Override
     protected void onDestroy() {
-        NotifyEngine.setHistoryListener(null);
-        Theme.setListener(null);
+        // 身份比对后再清监听：重建时序"新 onCreate → 旧 onDestroy"，旧实例不能抹掉新实例的注册
+        if (NotifyEngine.historyListener() == this) NotifyEngine.setHistoryListener(null);
+        if (Theme.listener() == this) Theme.setListener(null);
         if (mExitTip != null) { // 清掉退出提示的渐隐回调/动画，避免销毁期再触碰视图树
             mContent.removeCallbacks(mExitFadeStart);
             mExitTip.animate().cancel();
         }
         // WebView 是全进程单例：只从视图树摘下，不销毁，下次启动复用同一会话
-        PanelController.detach();
+        PanelController.detach(this);
         super.onDestroy();
     }
 
@@ -902,10 +908,12 @@ public class MainActivity extends Activity
                 + "· 崩溃日志：仅存本机，仅你主动查看\n"
                 + "· 用量页登录态：bigmodel.cn 的 Cookie，仅本机保存\n\n"
                 + "三、网络通信对象仅限\n"
-                + "· zcode.z.ai（官方远程控制）\n"
-                + "· bigmodel.cn（智谱官方用量页）\n"
+                + "· z.ai 系官方域名（zcode.z.ai 远程控制；含 OAuth 登录授权域 chat.z.ai 等子域）\n"
+                + "· bigmodel.cn 系官方域名（智谱官方用量页）\n"
+                + "· 为支持官方 OAuth 登录链路，对上述官方子域启用了跨子域第三方 Cookie\n"
+                + "· 页面内触发的文件下载经系统下载管理器进行，目标为上述官方域名主机\n"
                 + "· 你配置的 ntfy 服务器（默认公共 ntfy.sh）：仅当开启\"桌面直推\"时，"
-                + "任务标题（默认为会话首条输入的截断文本）与状态变化经其转发，"
+                + "任务标题（默认为会话首条输入的截断文本）、状态变化与错误消息摘要经其转发，"
                 + "不含代码/文件/凭据；介意者可自建 ntfy 或关闭该功能\n"
                 + "页面内数据的处理遵循智谱官方隐私条款，本 APP 不经手、不转发、不存储。\n\n"
                 + "四、权限用途\n"

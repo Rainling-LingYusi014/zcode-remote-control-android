@@ -41,6 +41,11 @@ public final class NotifyEngine {
     private static boolean sInited = false;
     private static HistoryListener sListener;
 
+    /** 供销毁方做身份比对（重建时序下旧实例不得抹掉新实例的注册）。 */
+    static HistoryListener historyListener() {
+        return sListener;
+    }
+
     /** 历史变化回调（UI 线程），供角标/列表实时刷新。 */
     public interface HistoryListener {
         void onHistoryChanged();
@@ -77,14 +82,19 @@ public final class NotifyEngine {
 
     /** JS 桥：页面里的注入脚本通过 window.zrcBridge.* 回传事件/快照。 */
     public static class Bridge {
+        // 每个入口先做来源短路（审查 P1-1）：注入对象对所有页面/子帧可见，route() 拦不住
+        // 302 跳转与 iframe，非白名单主帧一律拒绝，防止任务快照外泄与通知伪造。
+
         @JavascriptInterface
         public void onEvents(String json) {
+            if (!PanelController.onTrustedOrigin()) return;
             NotifyEngine.onTaskEvents(json);
         }
 
         /** 注入脚本冷启动时取上一次持久化快照，保证跨进程死亡也能 diff 出"死掉期间"的变化。 */
         @JavascriptInterface
         public String getLastSnapshot() {
+            if (!PanelController.onTrustedOrigin()) return "null";
             try {
                 return app().getSharedPreferences("zremote", Context.MODE_PRIVATE)
                         .getString("last_snapshot", "null");
@@ -95,6 +105,7 @@ public final class NotifyEngine {
 
         @JavascriptInterface
         public void onSnapshot(String json) {
+            if (!PanelController.onTrustedOrigin()) return;
             try {
                 app().getSharedPreferences("zremote", Context.MODE_PRIVATE)
                         .edit().putString("last_snapshot", json).apply();
@@ -104,17 +115,20 @@ public final class NotifyEngine {
 
         @JavascriptInterface
         public void onTheme(boolean dark) {
+            if (!PanelController.onTrustedOrigin()) return;
             Theme.set(app(), dark);
         }
 
         /** 注入脚本回报"等待桌面端配对"状态（死会话等待页），原生据此显隐右上角扫码钮。 */
         @JavascriptInterface
         public void onPairingWait(boolean waiting) {
+            if (!PanelController.onTrustedOrigin()) return;
             PanelController.onPairingWait(waiting);
         }
 
         @JavascriptInterface
         public void onSearch() {
+            if (!PanelController.onTrustedOrigin()) return;
             PanelController.fireSearch();
         }
     }

@@ -30,8 +30,10 @@ for f in "$ANDROID_JAR" "$AAPT2" "$D8_JAR" "$ZIPALIGN" "$APKSIGNER_JAR"; do
   [ -f "$f" ] || { echo "缺少构建工具：$f" >&2; exit 1; }
 done
 
-# 二维码识别库（扫码配对用，Apache-2.0，约 600KB）
+# 二维码识别库（扫码配对用，Apache-2.0，约 600KB）；SHA-1 固定为 Maven Central 官方值，
+# 每次构建校验，防镜像劫持/缓存投毒产出带毒 APK（审查 P2-3）
 ZXING_JAR="$TC/zxing-core-3.5.3.jar"
+ZXING_SHA1="ca1349214a356cd7958651b2d5a0e1f3811a9c4b"
 if [ ! -f "$ZXING_JAR" ]; then
   echo "== 0/6 下载 zxing-core-3.5.3.jar"
   curl -fL --retry 2 -o "$ZXING_JAR" \
@@ -40,6 +42,8 @@ if [ ! -f "$ZXING_JAR" ]; then
       "https://repo1.maven.org/maven2/com/google/zxing/core/3.5.3/core-3.5.3.jar"
 fi
 [ -f "$ZXING_JAR" ] || { echo "缺少依赖库：$ZXING_JAR" >&2; exit 1; }
+echo "$ZXING_SHA1  $ZXING_JAR" | sha1sum -c - >/dev/null 2>&1 ||
+  { echo "zxing-core-3.5.3.jar 校验失败：与官方 SHA-1 不符，请删除后重新下载" >&2; exit 1; }
 
 OUT="${OUT:-build}"
 # javac 诊断输出统一英文，避免 GBK 乱码
@@ -89,7 +93,7 @@ javac -encoding UTF-8 --release 8 -nowarn \
 
 echo "== 3/6 d8"
 find "$OUT/classes" -name '*.class' > "$OUT/classes.txt"
-# r34 自带的 d8 8.2.2-dev 有内部类 NPE bug，改用新版 r8 jar（E:\.ZCode\toolchain\r8-8.5.35.jar）
+# r34 自带的 d8 8.2.2-dev 有内部类 NPE bug，改用 toolchain 目录下的新版 r8 jar（r8-8.5.35.jar）
 R8_JAR="$TC/r8-8.5.35.jar"
 [ -f "$R8_JAR" ] || R8_JAR="$D8_JAR"
 java -cp "$R8_JAR" com.android.tools.r8.D8 \

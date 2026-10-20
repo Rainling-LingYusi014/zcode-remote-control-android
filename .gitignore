@@ -10,3 +10,5 @@ branding-local/
 .DS_Store
 .keystore-pass
 .keystore-pass.local
+zrc-watch*.json
+docs/代码审查-*.md

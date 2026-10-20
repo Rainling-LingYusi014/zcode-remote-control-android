@@ -3,7 +3,7 @@
 # 产出：res/mipmap-*/ic_launcher.png（legacy 全出血）、ic_launcher_fg.png（自适应前景，透明底）
 #       design/icon-master.png（1024 底稿）。背景色 #0E0F10 由 res/values/colors.xml ic_launcher_bg 提供。
 Add-Type -AssemblyName System.Drawing
-$root  = "E:\.ZCode\zremote"
+$root  = Split-Path -Parent $PSScriptRoot   # 仓库根 = 本脚本所在 design/ 的上一级
 $script:bgC   = [System.Drawing.Color]::FromArgb(255,14,15,16)    # ZCode 官方图标实测黑
 $script:redC  = [System.Drawing.Color]::FromArgb(255,229,72,77)   # 线缆/双针
 $script:whtC  = [System.Drawing.Color]::White                     # 插头体/接头

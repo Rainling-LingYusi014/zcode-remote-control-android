@@ -190,6 +190,25 @@ public final class PanelController {
         return sWebView;
     }
 
+    /** 主帧当前 URL 快照：onPageStarted/Finished 在主线程更新，桥线程只读快照、不碰 WebView。 */
+    private static volatile String sCurrentUrl;
+
+    /**
+     * 桥面信任判定：主帧 host 是否在应用内白名单。addJavascriptInterface 的注入对象对
+     * 所有页面与子帧可见，而 route() 拦不住服务端 302 跳转与 iframe（审查 P1-1），
+     * 桥方法入口必须先经本方法短路。注意注入面（onPageStarted）仍以 zcode.z.ai 为界，
+     * 与桥面白名单（*.z.ai / *.bigmodel.cn）是两个不同的信任边界。
+     */
+    static boolean onTrustedOrigin() {
+        String url = sCurrentUrl;
+        if (url == null) return false;
+        try {
+            return inAppHost(Uri.parse(url).getHost());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /** 注入脚本回报"等待桌面端配对"：仅死会话/等待页显示右上角扫码钮，正常界面不遮挡。JS 桥线程调用。 */
     static void onPairingWait(boolean waiting) {
         android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
@@ -295,8 +314,13 @@ public final class PanelController {
         }
     }
 
-    /** Activity 销毁：摘下视图、解除 Activity 引用，WebView 本体和会话保留。 */
-    static void detach() {
+    /**
+     * Activity 销毁：摘下视图、解除 Activity 引用，WebView 本体和会话保留。
+     * expected 比对：语言/字体缩放等触发的重建时序是"新 onCreate → 旧 onDestroy"，
+     * 旧实例不得拆掉新实例刚挂载的视图与引用（审查 P2-2）。
+     */
+    static void detach(Activity expected) {
+        if (sActivity != null && sActivity != expected) return;
         if (sWebView != null) {
             ViewGroup parent = (ViewGroup) sWebView.getParent();
             if (parent != null) parent.removeView(sWebView);
@@ -305,6 +329,8 @@ public final class PanelController {
         sCorner = null;
         sHelp = null;
         sGh = null;
+        sOnSearch = null;
+        sOnScan = null;
         if (sCtxWrapper != null) {
             sCtxWrapper.setBaseContext(sCtxWrapper.getApplicationContext());
         }
@@ -353,6 +379,7 @@ public final class PanelController {
 
             @Override
             public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                sCurrentUrl = url; // 服务端 302 的落点也会走到这里，快照必须先于注入更新
                 // 尽早注入：脚本自带"等任务卡出现"的重试，SPA 内路由切换不重新触发本回调，
                 // observer 挂在 document.body 上跨路由存活
                 if (url != null && url.startsWith("https://" + ALLOWED_HOST)) {
@@ -367,6 +394,7 @@ public final class PanelController {
 
             @Override
             public void onPageFinished(WebView view, String url) {
+                sCurrentUrl = url;
                 // 只保存真正的会话链接（/remote/v4?sid=...），官网首页不算（仅存 APP 私有目录）
                 if (url != null && url.startsWith("https://" + ALLOWED_HOST + "/remote")) {
                     sPrefs.edit().putString("last_url", url).apply();
@@ -540,7 +568,7 @@ public final class PanelController {
         return true;
     }
 
-    private static boolean inAppHost(String host) {
+    static boolean inAppHost(String host) {
         if (host == null) return false;
         return host.equals("z.ai") || host.endsWith(".z.ai")
                 || host.equals("bigmodel.cn") || host.endsWith(".bigmodel.cn");

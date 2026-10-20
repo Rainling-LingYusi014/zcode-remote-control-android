@@ -15,6 +15,11 @@ public final class Theme {
 
     public static volatile boolean dark = true;
     private static Listener sListener;
+
+    /** 供销毁方做身份比对（重建时序下旧实例不得抹掉新实例的注册）。 */
+    static Listener listener() {
+        return sListener;
+    }
     private static final Handler sMain = new Handler(Looper.getMainLooper());
 
     private Theme() {}
