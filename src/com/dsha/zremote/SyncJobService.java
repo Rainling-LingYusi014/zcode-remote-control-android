@@ -11,9 +11,12 @@ import android.os.Looper;
 import android.webkit.WebView;
 
 /**
- * L3 兜底：即使 APP 进程已死，系统按周期拉起本 Job，
- * 离屏加载会话页（注入脚本自动跑 diff 回传）→ 挂 30 秒收事件 → 结束。
- * 名义周期 15-30 分钟；HyperOS/Doze 下实际可能被推迟，属预期内。
+ * L3 兜底：即使 APP 进程已死，系统按周期拉起本 Job。
+ * v2 起两级策略：
+ *  · 直推开启 → 轻量模式：只拉一次 ntfy（一次 HTTP，不建 WebView，省电省流量），
+ *    拉取失败才回落全量；
+ *  · 直推关闭/失败 → 全量模式：离屏加载会话页（注入脚本自动跑 diff 回传）→ 挂 30 秒收事件。
+ * 名义周期 15 分钟-2 小时可调；HyperOS/Doze 下实际可能被推迟，属预期内。
  */
 public class SyncJobService extends JobService {
 
@@ -25,8 +28,32 @@ public class SyncJobService extends JobService {
     public boolean onStartJob(JobParameters params) {
         Context app = getApplicationContext();
         NotifyEngine.init(app);
-        AppSettings.setLastCheck(app, System.currentTimeMillis(), "执行中");
 
+        if (NtfyReceiver.enabled(app)) {
+            AppSettings.setLastCheck(app, System.currentTimeMillis(), "执行中（直推轻量）");
+            new Thread(() -> {
+                int n;
+                try {
+                    n = NtfyReceiver.pollOnce(app);
+                } catch (Exception e) {
+                    AppSettings.setLastCheck(app, System.currentTimeMillis(),
+                            "直推失败，回落全量：" + e.getMessage());
+                    runFull(app, params);
+                    return;
+                }
+                AppSettings.setLastCheck(app, System.currentTimeMillis(), "直推拉取 +" + n);
+                jobFinished(params, false);
+            }, "zrc-job-ntfy").start();
+            return true;
+        }
+
+        AppSettings.setLastCheck(app, System.currentTimeMillis(), "执行中（全量）");
+        runFull(app, params);
+        return true;
+    }
+
+    /** 全量兜底：拉起离屏 WebView 让注入脚本自己 diff（v1 行为，原样保留）。 */
+    private void runFull(Context app, JobParameters params) {
         PanelController.ensureCreated(app);
         WebView wv = PanelController.webview();
         if (wv != null) {
@@ -54,7 +81,6 @@ public class SyncJobService extends JobService {
             jobFinished(params, false);
         };
         mHandler.postDelayed(mFinish, 30_000);
-        return true;
     }
 
     @Override

@@ -1,14 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.dsha.zremote"
-    android:versionCode="23"
-    android:versionName="1.1.1">
+    android:versionCode="24"
+    android:versionName="1.2.0">
 
     <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="33" />
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -65,10 +64,5 @@
             android:name=".SyncJobService"
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
-
-        <service
-            android:name=".KeepAliveService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>
