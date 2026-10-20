@@ -275,17 +275,16 @@ public final class NotifyEngine {
         "var m=/rgba?\\((\\d+)[, ]+(\\d+)[, ]+(\\d+)/.exec(bg||'');" +
         "if(!m)return true;var lum=0.299*m[1]+0.587*m[2]+0.114*m[3];return lum<140;}" +
         "var lastTheme=null;var pwLast=null;var pwTs=0;var pwObs=false;" +
-        // 断连/失效检测只认"短文本叶子节点"（≤30 字、无子元素的 UI 标签），忽略聊天长段落——
-        // 否则任务会话正文里讨论到这些词（本项目常态）会整页误报；跳过 pre/code 内的引用。
+        // 断连/失效检测＝关键词全文匹配 + "页面有输入框"否决。任务会话页有聊天输入框
+        // （textarea/contenteditable，无障碍树里是 EditText，已实测），其正文（本项目常态）
+        // 满是这些词，纯文本匹配必然误报；等待配对/错误页没有输入框，不受影响。
         // 注意：不能加"二维码失效"——官方会话页常驻横幅里就有这四个字，会误报常显
         "function pairWait(){var n=Date.now();if(n-pwTs<800)return;pwTs=n;" +
-        "var w=false;var els=document.querySelectorAll('h1,h2,h3,h4,h5,p,span,div,button,strong,b');" +
-        "for(var i=0;i<els.length;i++){var e=els[i];" +
-        "if(e.firstElementChild||e.closest('pre,code'))continue;" +
-        "var t=(e.textContent||'').replace(/\\s+/g,' ');" +
-        "if(t.length<2||t.length>30)continue;" +
-        "if(t.indexOf('等待桌面端')>=0||t.indexOf('连接中断')>=0||t.indexOf('校验失败')>=0" +
-        "||t.indexOf('链接已失效')>=0||t.indexOf('连接已断开')>=0){w=true;break;}}" +
+        "var w=false;" +
+        "if(!document.querySelector('textarea,[contenteditable=\"true\"],[contenteditable=\"\"]')){" +
+        "var t=document.body?document.body.innerText:'';" +
+        "w=t.indexOf('等待桌面端')>=0||t.indexOf('连接中断')>=0||t.indexOf('校验失败')>=0" +
+        "||t.indexOf('链接已失效')>=0||t.indexOf('连接已断开')>=0;}" +
         "if(w!==pwLast){pwLast=w;try{window.zrcBridge.onPairingWait(w);}catch(e){}}}" +
         "function pwWatch(){if(pwObs||!document.body)return;" +
         "try{new MutationObserver(function(){pairWait();}).observe(document.body," +
