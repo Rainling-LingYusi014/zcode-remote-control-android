@@ -594,7 +594,7 @@ public class MainActivity extends Activity
 
     private void exitTipShow() {
         mExitArmAt = android.os.SystemClock.uptimeMillis();
-        if (mExitTip != null) { // 防御：窗口(5s)比提示寿命(3s)长，理论上不会走到
+        if (mExitTip != null) { // 防御：窗口(5s)比提示寿命(2.5s)长，理论上不会走到
             mContent.removeCallbacks(mExitFadeStart);
             mExitTip.animate().cancel();
             mExitTip.setAlpha(1f);
@@ -617,7 +617,7 @@ public class MainActivity extends Activity
         int h = mContent.getHeight();
         lp.bottomMargin = h > 0 ? (int) (h * 0.25f) : (int) dp(160); // 屏幕中下部
         mContent.addView(tip, lp);
-        mContent.postDelayed(mExitFadeStart, 2000); // 前 2s 全不透明
+        mContent.postDelayed(mExitFadeStart, 1500); // 前 1.5s 全不透明
     }
 
     private final Runnable mExitFadeStart = new Runnable() {
