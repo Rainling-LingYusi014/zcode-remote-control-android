@@ -338,7 +338,8 @@ public final class PanelController {
 
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
-        cm.setAcceptThirdPartyCookies(wv, false);
+        // 新版远程控制页 OAuth 登录跳 chat.z.ai，跨子域授权链路需要第三方 Cookie
+        cm.setAcceptThirdPartyCookies(wv, true);
 
         // JS 桥：WebView 的 URL 路由白名单保证只有 zcode.z.ai 会在这里加载（错误页是我们自己的）
         wv.addJavascriptInterface(new NotifyEngine.Bridge(), NotifyEngine.BRIDGE_NAME);
@@ -523,17 +524,26 @@ public final class PanelController {
         });
     }
 
-    /** URL 路由：自家域名应用内打开，其余 http(s) 与外部协议全部抛给系统浏览器。 */
+    /**
+     * URL 路由：z.ai / bigmodel.cn 官方系域名应用内打开，其余 http(s) 与外部协议全部抛给系统浏览器。
+     * 白名单必须覆盖 OAuth 登录域（chat.z.ai）：新版远程控制页的登录跳转若被甩出 WebView，
+     * CSRF nonce 与会话就分了家，回调校验必然失败（2026-10 桌面 3.16.2 实测）。
+     */
     private static boolean route(Uri u) {
         String scheme = u.getScheme() == null ? "" : u.getScheme();
         if ("http".equals(scheme) || "https".equals(scheme)) {
-            String host = u.getHost() == null ? "" : u.getHost();
-            if (ALLOWED_HOST.equals(host)) return false; // 应用内打开
+            if (inAppHost(u.getHost())) return false; // 应用内打开
             openExternal(u);
             return true;
         }
         openExternal(u);
         return true;
+    }
+
+    private static boolean inAppHost(String host) {
+        if (host == null) return false;
+        return host.equals("z.ai") || host.endsWith(".z.ai")
+                || host.equals("bigmodel.cn") || host.endsWith(".bigmodel.cn");
     }
 
     private static void openExternal(Uri u) {
