@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 取自官方 Z 底牌渐变 (#131516→#030303) 的中间调 -->
-    <color name="ic_launcher_bg">#10151B</color>
+    <!-- 定稿图标底色：官方 ZCode 图标实测黑 (#0B0C0C~#141617 采样中值) -->
+    <color name="ic_launcher_bg">#0E0F10</color>
 </resources>
