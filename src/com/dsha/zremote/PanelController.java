@@ -569,7 +569,7 @@ public final class PanelController {
     }
 
     static boolean inAppHost(String host) {
-        if (host == null) return false;
+        if (host == null || host.isEmpty() || host.charAt(0) == '.') return false;
         return host.equals("z.ai") || host.endsWith(".z.ai")
                 || host.equals("bigmodel.cn") || host.endsWith(".bigmodel.cn");
     }
