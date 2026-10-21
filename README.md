@@ -75,6 +75,7 @@ LOCAL=1 ./build.sh      # 产物 build/zremote-local.apk
 ## 品牌
 
 - 本项目名称、图标均为原创，与 Z.ai 官方产品存在差异
+- 启动器/预设图标（`design/icon-master.png`）由作者手绘，著作权归作者所有
 - 请勿在本仓库或分发版中包含 Z.ai 官方图标、商标等品牌资产
 - 分发/二改请保留 README 中的非官方声明
 
