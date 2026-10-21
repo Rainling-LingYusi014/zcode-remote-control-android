@@ -580,13 +580,14 @@ public class MainActivity extends Activity
     public void onBackPressed() {
         if (mSearchOverlay != null) {
             dismissSearch();
-        } else if (mTab == TAB_MESSAGES) {
-            showTab(TAB_PANEL);
-        } else if (PanelController.canGoBack()) {
-            PanelController.goBack();
+        } else if (mTab == TAB_MESSAGES || mTab == TAB_SETTINGS) {
+            showTab(TAB_PANEL); // 设置页返回=回面板，不吃 WebView 后退（P3-13）
         } else if (android.os.SystemClock.uptimeMillis() - mExitArmAt < EXIT_ARM_MS) {
             exitAppNow();
         } else {
+            // 面板（主界面）返回一律走退出拦截，不先走 WebView 后退：
+            // OAuth 修复后 v4→登录页在应用内导航会积累历史栈，WebView 后退会
+            // 绕过拦截退回"正在连接中转服务"死页（冒烟实测回归，2026-10-21）
             exitTipShow();
         }
     }
