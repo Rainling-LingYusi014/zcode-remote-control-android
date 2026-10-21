@@ -57,6 +57,7 @@ public final class PanelController {
     private static boolean sLoadedOnce = false;
     private static SharedPreferences sPrefs;
     private static ViewGroup sPillBox;
+    private static TextView sLoginHint;
     private static View sCorner;
     private static View sHelp;
     private static View sGh;
@@ -140,6 +141,25 @@ public final class PanelController {
         lp.bottomMargin = (int) dp(28);
         root.addView(pillBox, lp);
         sPillBox = pillBox;
+
+        // 登录方式提示：仅在首次登录前（登录页/首页）显示。备用机实测：重扫同一二维码时
+        // 单设备限制 + z.ai（全球）登录容易异常，推荐 bigmodel 国内账号
+        TextView loginHint = new TextView(sCtxWrapper);
+        loginHint.setText("建议优先使用 bigmodel（智谱国内）账号登录\n"
+                + "z.ai（全球）登录在重扫二维码 / 更换设备时容易异常（同一会话仅支持一台设备）");
+        loginHint.setTextColor(0xFF8A97A0);
+        loginHint.setTextSize(12);
+        loginHint.setGravity(Gravity.CENTER);
+        loginHint.setLineSpacing(dp(3), 1f);
+        int hintPad = (int) dp(20);
+        loginHint.setPadding(hintPad, 0, hintPad, 0);
+        loginHint.setVisibility(View.GONE);
+        FrameLayout.LayoutParams hintLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        hintLp.bottomMargin = (int) dp(56);
+        root.addView(loginHint, hintLp);
+        sLoginHint = loginHint;
         return root;
     }
 
@@ -216,6 +236,8 @@ public final class PanelController {
     }
 
     private static void showCorner(boolean show) {
+        // 首次登录前一律不亮：错误页/等待页在未登录状态下扫码无意义
+        if (!sPrefs.getBoolean("ever_logged_in", false)) show = false;
         if (sCorner != null) sCorner.setVisibility(show ? View.VISIBLE : View.GONE);
         if (sHelp != null) sHelp.setVisibility(show ? View.VISIBLE : View.GONE);
         if (sGh != null) sGh.setVisibility(show ? View.VISIBLE : View.GONE);
@@ -326,6 +348,7 @@ public final class PanelController {
             if (parent != null) parent.removeView(sWebView);
         }
         sPillBox = null;
+        sLoginHint = null;
         sCorner = null;
         sHelp = null;
         sGh = null;
@@ -397,7 +420,9 @@ public final class PanelController {
                 sCurrentUrl = url;
                 // 只保存真正的会话链接（/remote/v4?sid=...），官网首页不算（仅存 APP 私有目录）
                 if (url != null && url.startsWith("https://" + ALLOWED_HOST + "/remote")) {
-                    sPrefs.edit().putString("last_url", url).apply();
+                    // 落地过会话页＝完成过一次登录；登录前不亮扫码/粘贴入口（首次使用不挡登录 UI）
+                    sPrefs.edit().putString("last_url", url)
+                            .putBoolean("ever_logged_in", true).apply();
                 }
                 updatePill(url);
             }
@@ -455,7 +480,13 @@ public final class PanelController {
         // 远程控制链接带授权特征（token 参数或 /remote、/connect 路径）；官网/营销页一律显示操作钮
         String u = url == null ? "" : url.toLowerCase();
         boolean onSession = u.contains("token=") || u.contains("/remote") || u.contains("/connect");
-        sPillBox.setVisibility(onSession ? View.GONE : View.VISIBLE);
+        // 首次使用（还没登录过）不显示操作钮：连账号都没有，扫码/粘贴只会挡登录页、徒增异常路径
+        boolean firstRun = !sPrefs.getBoolean("ever_logged_in", false);
+        sPillBox.setVisibility(onSession || firstRun ? View.GONE : View.VISIBLE);
+        // 未登录阶段的登录方式提示：登录完成后（含进入会话页）即隐藏
+        if (sLoginHint != null) {
+            sLoginHint.setVisibility(!onSession && firstRun ? View.VISIBLE : View.GONE);
+        }
     }
 
     /** 设置页「重新配对 → 粘贴链接」与面板 pill 共用的导入入口。 */

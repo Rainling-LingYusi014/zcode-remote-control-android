@@ -80,6 +80,7 @@ public class MainActivity extends Activity
     private LinearLayout mUndoBar;
     private TextView mUndoMsg;
     private ArrayList<JSONObject> mUndoItems;
+    private TextView mEmptyHint; // 消息页空态居中小字
     private final Runnable mUndoFadeR = new Runnable() {
         @Override
         public void run() {
@@ -128,6 +129,15 @@ public class MainActivity extends Activity
         mContent.addView(mListView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         mContent.addView(mSettingsView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        // 消息页空态提示：居中小字，仅消息 Tab 且历史为空时可见
+        mEmptyHint = new TextView(this);
+        mEmptyHint.setText("暂无消息");
+        mEmptyHint.setTextColor(Theme.textSecondary());
+        mEmptyHint.setTextSize(14);
+        mEmptyHint.setGravity(Gravity.CENTER);
+        mEmptyHint.setVisibility(View.GONE);
+        mContent.addView(mEmptyHint, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         buildUndoBar();
 
@@ -340,7 +350,7 @@ public class MainActivity extends Activity
             mBiometricSignal = new android.os.CancellationSignal();
             android.hardware.biometrics.BiometricPrompt prompt =
                     new android.hardware.biometrics.BiometricPrompt.Builder(this)
-                            .setTitle("解锁 ZCode RC")
+                            .setTitle("解锁 " + appName())
                             .setSubtitle("验证指纹以继续，也可使用下方 PIN")
                             .setNegativeButton("使用 PIN", getMainExecutor(),
                                     (dialog, which) -> mBiometricSignal = null)
@@ -381,7 +391,7 @@ public class MainActivity extends Activity
         overlay.addView(box, boxLp);
 
         TextView title = new TextView(this);
-        title.setText("🔒 ZCode RC 已锁定");
+        title.setText("🔒 " + appName() + " 已锁定");
         title.setTextColor(Theme.textPrimary());
         title.setTextSize(18);
         TextView sub = new TextView(this);
@@ -490,8 +500,7 @@ public class MainActivity extends Activity
         clearAll.setOnClickListener(v -> {
             ArrayList<JSONObject> cleared = NotifyEngine.historyDesc(); // 清空前留底，供撤销
             if (cleared.isEmpty()) {
-                android.widget.Toast.makeText(this, "没有消息可清空",
-                        android.widget.Toast.LENGTH_SHORT).show();
+                tipShow("没有消息可清空");
                 return;
             }
             NotifyEngine.clearHistory();
@@ -594,6 +603,49 @@ public class MainActivity extends Activity
         mContent.postDelayed(mUndoFadeR, 4000L);
     }
 
+    // 轻提示 pill：样式与节奏沿用退出拦截提示（深色圆角、1.5s 驻留 + 1s 渐隐）
+    private TextView mTipPill;
+    private final Runnable mTipFadeStart = new Runnable() {
+        @Override
+        public void run() {
+            if (mTipPill == null) return;
+            mTipPill.animate().alpha(0f).setDuration(1000)
+                    .withEndAction(() -> {
+                        if (mTipPill != null) {
+                            mContent.removeView(mTipPill);
+                            mTipPill = null;
+                        }
+                    }).start();
+        }
+    };
+
+    private void tipShow(String text) {
+        if (mTipPill != null) {
+            mContent.removeCallbacks(mTipFadeStart);
+            mTipPill.animate().cancel();
+            mContent.removeView(mTipPill);
+            mTipPill = null;
+        }
+        TextView tip = new TextView(this);
+        tip.setText(text);
+        tip.setTextColor(0xFFFFFFFF);
+        tip.setTextSize(14);
+        int ph = (int) dp(18), pv = (int) dp(10);
+        tip.setPadding(ph, pv, ph, pv);
+        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+        bg.setColor(0xFF0A0E12); // 同退出拦截提示的深色系，不随主题变
+        bg.setCornerRadius(dp(12));
+        tip.setBackground(bg);
+        mTipPill = tip;
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM);
+        int h = mContent.getHeight();
+        lp.bottomMargin = h > 0 ? (int) (h * 0.25f) : (int) dp(160); // 屏幕中下部
+        mContent.addView(tip, lp);
+        mContent.postDelayed(mTipFadeStart, 1500); // 前 1.5s 全不透明
+    }
+
     private void buildUndoBar() {
         mUndoBar = new LinearLayout(this);
         mUndoBar.setOrientation(LinearLayout.HORIZONTAL);
@@ -673,6 +725,7 @@ public class MainActivity extends Activity
             mAdapter.reload();
             mMsgTick.postDelayed(mMsgTickR, 30_000L);
         }
+        refreshEmptyHint();
         if (tab == TAB_SETTINGS) refreshHeartbeat();
         for (int i = 0; i < mTabButtons.length; i++) {
             mTabButtons[i].setTextColor(i == tab ? Theme.textPrimary() : Theme.textSecondary());
@@ -690,7 +743,13 @@ public class MainActivity extends Activity
         runOnUiThread(() -> {
             updateMessageCount();
             if (mTab == TAB_MESSAGES) mAdapter.reload();
+            refreshEmptyHint();
         });
+    }
+
+    private void refreshEmptyHint() {
+        boolean empty = NotifyEngine.historyDesc().isEmpty();
+        mEmptyHint.setVisibility(mTab == TAB_MESSAGES && empty ? View.VISIBLE : View.GONE);
     }
 
     private float dp(float v) {
@@ -919,6 +978,7 @@ public class MainActivity extends Activity
     protected void onDestroy() {
         mMsgTick.removeCallbacks(mMsgTickR);
         mContent.removeCallbacks(mUndoFadeR);
+        mContent.removeCallbacks(mTipFadeStart);
         // 身份比对后再清监听：重建时序"新 onCreate → 旧 onDestroy"，旧实例不能抹掉新实例的注册
         if (NotifyEngine.historyListener() == this) NotifyEngine.setHistoryListener(null);
         if (Theme.listener() == this) Theme.setListener(null);
@@ -1019,7 +1079,7 @@ public class MainActivity extends Activity
 
         box.addView(sectionLabel("关于"));
         box.addView(buttonRow("隐私政策", v -> showPrivacyPolicy()));
-        box.addView(buttonRow("GitHub 主页 · @Rainling-LingYusi014（支持/反馈）", v -> {
+        box.addView(buttonRow("GitHub 主页", v -> {
             try {
                 startActivity(new Intent(Intent.ACTION_VIEW,
                         Uri.parse("https://github.com/Rainling-LingYusi014")));
@@ -1028,7 +1088,7 @@ public class MainActivity extends Activity
             }
         }));
         TextView about = new TextView(this);
-        about.setText("ZRemote v" + versionName() + "\n"
+        about.setText(appName() + " v" + versionName() + "\n"
                 + "ZCode 远程控制增强壳 · 非官方项目，与 Z.ai 无隶属关系");
         about.setTextColor(Theme.textSecondary());
         about.setTextSize(12);
@@ -1052,6 +1112,16 @@ public class MainActivity extends Activity
             return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
         } catch (Exception e) {
             return "?";
+        }
+    }
+
+    /** 当前构建的应用名（本地构建=ZCode RC，发行=ZRemote），跟随 Manifest label，用户可见文案一律用此。 */
+    private String appName() {
+        try {
+            return getPackageManager().getApplicationLabel(
+                    getPackageManager().getApplicationInfo(getPackageName(), 0)).toString();
+        } catch (Exception e) {
+            return "ZRemote";
         }
     }
 
@@ -1434,7 +1504,7 @@ public class MainActivity extends Activity
         new android.app.AlertDialog.Builder(this)
                 .setTitle("后台权限引导")
                 .setMessage("HyperOS 会 aggressively 冻结后台，按下面三步设置后兜底通知才可靠：\n\n"
-                        + "① 自启动：设置 → 应用设置 → 应用管理 → Zcode RC → 自启动，开启\n\n"
+                        + "① 自启动：设置 → 应用设置 → 应用管理 → " + appName() + " → 自启动，开启\n\n"
                         + "② 省电策略：同一页面 → 省电策略 → 无限制\n\n"
                         + "③ 通知权限：确认\"允许通知\"已开（含锁屏）\n\n"
                         + "需要的话我现在就带你去应用信息页。")
@@ -1451,7 +1521,7 @@ public class MainActivity extends Activity
                     android.content.ClipboardManager cm = (android.content.ClipboardManager)
                             getSystemService(CLIPBOARD_SERVICE);
                     cm.setPrimaryClip(android.content.ClipData.newPlainText("guide",
-                            "设置→应用设置→应用管理→Zcode RC：自启动=开，省电策略=无限制，允许通知=开"));
+                            "设置→应用设置→应用管理→" + appName() + "：自启动=开，省电策略=无限制，允许通知=开"));
                     android.widget.Toast.makeText(this, "已复制", android.widget.Toast.LENGTH_SHORT).show();
                 })
                 .setNegativeButton("知道了", null)
