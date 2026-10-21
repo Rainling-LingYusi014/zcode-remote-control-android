@@ -144,6 +144,9 @@ public final class NotifyEngine {
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject ev = arr.getJSONObject(i);
                 String to = ev.optString("to", "");
+                // 终态白名单兜底（2026-10-21 幽灵事件回归）：注入侧已跳过读不到状态的卡，
+                // 这里再拦 L2 ntfy 直推等其余来源的空/脏状态，杜绝「已完成→空」假条目。
+                if (!to.matches("已完成|运行中|错误|失败|等待|排队|进行中")) continue;
                 String name = ev.optString("name", "任务");
                 if (isDuplicate(ev, to)) continue;
                 ev.put("ts", System.currentTimeMillis());
@@ -236,6 +239,32 @@ public final class NotifyEngine {
         trimAndSave();
     }
 
+    /** 按 ts 删除单条（消息列表左滑删除）。ts 毫秒级唯一，只删第一条匹配。 */
+    public static synchronized boolean removeByTs(long ts) {
+        for (int i = 0; i < sHistory.size(); i++) {
+            if (sHistory.get(i).optLong("ts", 0) == ts) {
+                sHistory.remove(i);
+                trimAndSave();
+                notifyHistoryListener();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 撤销删除/清空：把一批事件按各自 ts 插回时间线正确位置并落盘（单条删除=一条的批次）。 */
+    static synchronized void restoreItems(ArrayList<JSONObject> items) {
+        if (items == null || items.isEmpty()) return;
+        for (JSONObject ev : items) {
+            long ts = ev.optLong("ts", 0);
+            int i = sHistory.size();
+            while (i > 0 && sHistory.get(i - 1).optLong("ts", 0) > ts) i--;
+            sHistory.add(i, ev);
+        }
+        trimAndSave();
+        notifyHistoryListener();
+    }
+
     private static void trimAndSave() {
         while (sHistory.size() > MAX_HISTORY) sHistory.remove(0);
         try {
@@ -275,9 +304,16 @@ public final class NotifyEngine {
         "var RE = /^(已完成|运行中|错误|失败|等待|排队|进行中)$/;" +
         "function ownText(el){var t='';for(var i=0;i<el.childNodes.length;i++){var n=el.childNodes[i];if(n.nodeType===3)t+=n.textContent;}return t.trim();}" +
         "function statusOf(card){var els=card.querySelectorAll('*');for(var i=0;i<els.length;i++){var o=ownText(els[i]);if(RE.test(o))return o;}return '';}" +
-        "function nameOf(card){var el=card.querySelector('.truncate');return el?el.textContent.trim():card.textContent.trim().slice(0,30);}" +
+        "function nameOf(card){var el=card.querySelector('.truncate');" +
+        "var t=el?el.textContent.trim():card.textContent.trim().slice(0,30);" +
+        // v4 列表的名字元素偶尔会把相对时间标签粘进来（实测"泠娜项目1天"），剥离尾部时间串
+        "var s=t.replace(/(\\d+\\s*(?:分|分钟|小时|天)前?|刚刚|现在)+$/,'').trim();return s||t;}" +
         "function snapshot(){var m={};var cs=document.querySelectorAll('[data-testid^=\"task-item-\"]');" +
-        "for(var i=0;i<cs.length;i++){var c=cs[i];m[c.getAttribute('data-testid')]={n:nameOf(c),s:statusOf(c)};}return m;}" +
+        "for(var i=0;i<cs.length;i++){var c=cs[i];var s=statusOf(c);" +
+        // 状态读不到的卡整卡跳过：v4 列表在部分渲染态没有徽章文本，拍进去会产生
+        // 「已完成→空」幽灵事件且名字粘连时间标签（2026-10-21 真机实测）
+        "if(!RE.test(s))continue;" +
+        "m[c.getAttribute('data-testid')]={n:nameOf(c),s:s};}return m;}" +
         "var last=null,timer=null;" +
         "function loadLast(){try{return JSON.parse(window.zrcBridge.getLastSnapshot())||null;}catch(e){return null;}}" +
         "function persist(){try{window.zrcBridge.onSnapshot(JSON.stringify(last));}catch(e){}}" +

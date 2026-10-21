@@ -7,8 +7,8 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.text.format.DateUtils;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -55,6 +55,53 @@ public class MainActivity extends Activity
     private final ArrayList<JSONObject> mSearchShown = new ArrayList<>();
     private android.widget.BaseAdapter mSearchAdapter;
 
+    // 消息页停留时周期重绑，相对时间才能跟着走（现在 → N分钟前 → …）
+    private final android.os.Handler mMsgTick = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable mMsgTickR = new Runnable() {
+        @Override
+        public void run() {
+            if (mTab == TAB_MESSAGES && mAdapter != null) {
+                mAdapter.notifyDataSetChanged();
+                mMsgTick.postDelayed(this, 30_000L);
+            }
+        }
+    };
+
+    // 消息列表左滑删除手势状态（单手势单行，DOWN 定目标，MOVE 接管，UP 结算）
+    private int mTouchSlop;
+    private final int[] mSwipeDown = new int[2];
+    private int mSwipeFlat = Integer.MIN_VALUE;
+    private boolean mSwiping;
+    private View mSwipeContent;
+    private JSONObject mSwipeEvent;
+
+    // 删除/清空反馈条：5 秒内可撤销（防手滑），替代一次性 Toast；单条与清空共用。
+    // 节奏：前 4 秒维持 80% 不透明度，最后 1 秒渐隐至 0 后隐藏。
+    private LinearLayout mUndoBar;
+    private TextView mUndoMsg;
+    private ArrayList<JSONObject> mUndoItems;
+    private final Runnable mUndoFadeR = new Runnable() {
+        @Override
+        public void run() {
+            if (mUndoBar == null) return;
+            mUndoBar.animate().alpha(0f).setDuration(1000L)
+                    .withEndAction(() -> {
+                        mUndoBar.setVisibility(View.GONE);
+                        mUndoItems = null;
+                    }).start();
+        }
+    };
+
+    /** 立即收起反馈条（撤销点击/重建清理用）：停掉待触发的渐隐与进行中的动画。 */
+    private void undoDismiss() {
+        mContent.removeCallbacks(mUndoFadeR);
+        if (mUndoBar != null) {
+            mUndoBar.animate().cancel();
+            mUndoBar.setVisibility(View.GONE);
+        }
+        mUndoItems = null;
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -82,6 +129,7 @@ public class MainActivity extends Activity
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         mContent.addView(mSettingsView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        buildUndoBar();
 
         mRoot = new LinearLayout(this);
         mRoot.setOrientation(LinearLayout.VERTICAL);
@@ -413,21 +461,171 @@ public class MainActivity extends Activity
         lv.setDividerHeight(1);
         lv.setAdapter(mAdapter);
         lv.setOnItemClickListener((parent, view, position, id) -> {
-            int pos = position - 1; // 列表头占一位
-            if (pos >= 0 && pos < mAdapter.getCount()) {
-                JSONObject ev = mAdapter.getItem(pos);
-                PanelController.openTask(ev.optString("id", ""));
-            }
+            int pos = position - lv.getHeaderViewsCount(); // 列表头占位
+            JSONObject ev = pos >= 0 ? mAdapter.eventAt(pos) : null;
+            if (ev != null) PanelController.openTask(ev.optString("id", ""));
             showTab(TAB_PANEL);
         });
+        mTouchSlop = android.view.ViewConfiguration.get(this).getScaledTouchSlop();
+        // 左滑删除：DOWN 只记录不消费（不干扰列表滚动/点击），MOVE 横向位移超阈值才接管手势，
+        // 接管瞬间给 ListView 发 CANCEL 防止同时滚动；UP 按滑动距离决定删除还是弹回。
+        lv.setOnTouchListener((v, e) -> onListTouch(lv, e));
+
+        // 消息页头部：提示语 + 一键清空（清空是不可恢复操作，按钮做成红色低饱和提示）
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding((int) dp(16), (int) dp(12), (int) dp(8), (int) dp(12));
         mMsgHeader = new TextView(this);
-        mMsgHeader.setText("点任意条目回到面板");
+        mMsgHeader.setText("点任意条目回到面板 · 条目左滑可删除");
         mMsgHeader.setTextColor(Theme.textSecondary());
         mMsgHeader.setTextSize(13);
-        mMsgHeader.setPadding((int) dp(16), (int) dp(12), (int) dp(16), (int) dp(12));
-        lv.addHeaderView(mMsgHeader, null, false);
+        header.addView(mMsgHeader, weightLp());
+        TextView clearAll = new TextView(this);
+        clearAll.setText("清空所有消息");
+        clearAll.setTextColor(0xFFE57373);
+        clearAll.setTextSize(13);
+        int hp = (int) dp(8);
+        clearAll.setPadding(hp, hp, hp, hp);
+        clearAll.setOnClickListener(v -> {
+            ArrayList<JSONObject> cleared = NotifyEngine.historyDesc(); // 清空前留底，供撤销
+            if (cleared.isEmpty()) {
+                android.widget.Toast.makeText(this, "没有消息可清空",
+                        android.widget.Toast.LENGTH_SHORT).show();
+                return;
+            }
+            NotifyEngine.clearHistory();
+            mAdapter.reload();
+            updateMessageCount();
+            showUndo(cleared, "已清空全部消息（" + cleared.size() + " 条）");
+        });
+        header.addView(clearAll);
+        lv.addHeaderView(header, null, false);
         lv.setVisibility(View.GONE);
         return lv;
+    }
+
+    /** 消息列表左滑手势。返回 true 表示本次事件已被手势消费（不交给 ListView）。 */
+    private boolean onListTouch(ListView lv, MotionEvent e) {
+        switch (e.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                mSwiping = false;
+                mSwipeDown[0] = (int) e.getX();
+                mSwipeDown[1] = (int) e.getY();
+                mSwipeFlat = lv.pointToPosition(mSwipeDown[0], mSwipeDown[1]);
+                mSwipeContent = null;
+                mSwipeEvent = null;
+                return false;
+            case MotionEvent.ACTION_MOVE: {
+                if (mSwiping) {
+                    float dx = e.getX() - mSwipeDown[0];
+                    mSwipeContent.setTranslationX(Math.max(-dp(140), Math.min(0, dx)));
+                    return true;
+                }
+                float dx = e.getX() - mSwipeDown[0];
+                float dy = e.getY() - mSwipeDown[1];
+                // 横向明显占优才接管，纵向让位给列表滚动
+                if (Math.abs(dx) > mTouchSlop && Math.abs(dx) > Math.abs(dy) * 1.4f
+                        && resolveSwipeTarget(lv)) {
+                    MotionEvent c = MotionEvent.obtain(e.getDownTime(), e.getEventTime(),
+                            MotionEvent.ACTION_CANCEL, e.getX(), e.getY(), e.getMetaState());
+                    lv.onTouchEvent(c);
+                    c.recycle();
+                    mSwiping = true;
+                    return true;
+                }
+                return false;
+            }
+            case MotionEvent.ACTION_UP:
+                if (!mSwiping) return false;
+                settleSwipe(mSwipeContent.getTranslationX() < -dp(96));
+                mSwiping = false;
+                return true;
+            case MotionEvent.ACTION_CANCEL:
+                if (!mSwiping) return false;
+                settleSwipe(false);
+                mSwiping = false;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /** DOWN 时定下的列表位置 → 命中一条可删事件与它的行内容视图；分组头/头部/无效位返回 false。 */
+    private boolean resolveSwipeTarget(ListView lv) {
+        if (mSwipeFlat < lv.getHeaderViewsCount()) return false;
+        int pos = mSwipeFlat - lv.getHeaderViewsCount();
+        if (pos >= mAdapter.getCount()) return false;
+        Object it = mAdapter.getItem(pos);
+        if (!(it instanceof JSONObject)) return false; // 日期分组头不可滑
+        View row = lv.getChildAt(mSwipeFlat - lv.getFirstVisiblePosition());
+        if (row == null || row.getTag() == null) return false;
+        mSwipeEvent = (JSONObject) it;
+        mSwipeContent = (View) row.getTag();
+        return true;
+    }
+
+    private void settleSwipe(boolean delete) {
+        final View content = mSwipeContent;
+        final JSONObject ev = mSwipeEvent;
+        if (content == null) return;
+        content.animate().translationX(delete ? -content.getWidth() : 0).setDuration(180)
+                .withEndAction(() -> {
+                    if (delete && ev != null) {
+                        NotifyEngine.removeByTs(ev.optLong("ts", 0));
+                        updateMessageCount(); // 监听器会重载列表
+                        ArrayList<JSONObject> one = new ArrayList<>();
+                        one.add(ev);
+                        showUndo(one, "已删除该条消息");
+                    } else if (!delete) {
+                        content.setTranslationX(0); // 弹回（若视图已被回收，getView 会复位，此处无害）
+                    }
+                }).start();
+    }
+
+    /** 底部删除/清空反馈条：前 4 秒 80% 透明度驻留，最后 1 秒渐隐，期间可「撤销」按原时间位置整批放回。 */
+    private void showUndo(ArrayList<JSONObject> items, String text) {
+        mUndoItems = items;
+        mUndoMsg.setText(text);
+        mContent.removeCallbacks(mUndoFadeR);
+        mUndoBar.animate().cancel();
+        mUndoBar.setAlpha(0.8f);
+        mUndoBar.setVisibility(View.VISIBLE);
+        mContent.postDelayed(mUndoFadeR, 4000L);
+    }
+
+    private void buildUndoBar() {
+        mUndoBar = new LinearLayout(this);
+        mUndoBar.setOrientation(LinearLayout.HORIZONTAL);
+        mUndoBar.setGravity(Gravity.CENTER_VERTICAL);
+        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+        bg.setColor(0xFF232A32);
+        bg.setCornerRadius(dp(10));
+        mUndoBar.setBackground(bg);
+        int p = (int) dp(14);
+        mUndoBar.setPadding((int) dp(18), p, (int) dp(6), p);
+        mUndoMsg = new TextView(this);
+        mUndoMsg.setTextColor(0xFFFFFFFF);
+        mUndoMsg.setTextSize(14);
+        mUndoBar.addView(mUndoMsg, weightLp());
+        TextView undo = new TextView(this);
+        undo.setText("撤销");
+        undo.setTextColor(0xFF7CB8FF);
+        undo.setTextSize(14);
+        undo.setTypeface(null, android.graphics.Typeface.BOLD);
+        int q = (int) dp(10);
+        undo.setPadding(q, q, q, q);
+        undo.setOnClickListener(v -> {
+            ArrayList<JSONObject> items = mUndoItems;
+            undoDismiss();
+            if (items != null) NotifyEngine.restoreItems(items);
+        });
+        mUndoBar.addView(undo);
+        mUndoBar.setVisibility(View.GONE);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM);
+        lp.setMargins((int) dp(16), 0, (int) dp(16), (int) dp(20));
+        mContent.addView(mUndoBar, lp);
     }
 
     private LinearLayout buildBottomBar() {
@@ -470,7 +668,11 @@ public class MainActivity extends Activity
         mPanelView.setVisibility(tab == TAB_PANEL ? View.VISIBLE : View.GONE);
         mListView.setVisibility(tab == TAB_MESSAGES ? View.VISIBLE : View.GONE);
         mSettingsView.setVisibility(tab == TAB_SETTINGS ? View.VISIBLE : View.GONE);
-        if (tab == TAB_MESSAGES) mAdapter.reload();
+        mMsgTick.removeCallbacks(mMsgTickR);
+        if (tab == TAB_MESSAGES) {
+            mAdapter.reload();
+            mMsgTick.postDelayed(mMsgTickR, 30_000L);
+        }
         if (tab == TAB_SETTINGS) refreshHeartbeat();
         for (int i = 0; i < mTabButtons.length; i++) {
             mTabButtons[i].setTextColor(i == tab ? Theme.textPrimary() : Theme.textSecondary());
@@ -585,11 +787,41 @@ public class MainActivity extends Activity
         } else if (android.os.SystemClock.uptimeMillis() - mExitArmAt < EXIT_ARM_MS) {
             exitAppNow();
         } else {
-            // 面板（主界面）返回一律走退出拦截，不先走 WebView 后退：
-            // OAuth 修复后 v4→登录页在应用内导航会积累历史栈，WebView 后退会
-            // 绕过拦截退回"正在连接中转服务"死页（冒烟实测回归，2026-10-21）
-            exitTipShow();
+            // 面板返回：在具体会话视图里先回会话总览，总览才吃退出拦截。
+            // 不用原生 canGoBack/WebView 后退：v4 是 SPA，任务卡点击不产生历史栈，
+            // 而 OAuth 登录历史会让 canGoBack 误判并退回"正在连接中转服务"死页（7c0af41）。
+            panelBackOrExit();
         }
+    }
+
+    /** 页面侧判定+导航：有聊天输入框=会话视图 → 点页面左上角自带返回钮，找不到就 history.back()；无输入框=总览/登录/错误页 → 原生走退出拦截。 */
+    private static final String BACK_JS =
+        "(function(){try{" +
+        "var ta=document.querySelector('textarea,[contenteditable=\"true\"],[contenteditable=\"\"]');" +
+        "if(!ta)return 'list';" +
+        "var cs=document.querySelectorAll('button,[role=\"button\"],a');" +
+        "for(var i=0;i<cs.length;i++){var b=cs[i];var r=b.getBoundingClientRect();" +
+        "if(r.width<8||r.height<8||r.top>140||r.left>140)continue;" +
+        "if(b.querySelector('svg')&&!b.textContent.trim()){b.click();return 'back';}}" +
+        "history.back();return 'hist';" +
+        "}catch(e){return 'err';}})()";
+
+    private void panelBackOrExit() {
+        android.webkit.WebView wv = PanelController.webview();
+        if (wv == null) {
+            exitTipShow();
+            return;
+        }
+        final boolean[] done = {false};
+        wv.evaluateJavascript(BACK_JS, v -> {
+            done[0] = true;
+            // back/hist=已交给页面导航；list/err=总览或异常 → 退出拦截
+            if (v == null || !(v.contains("back") || v.contains("hist"))) exitTipShow();
+        });
+        // 页面无响应兜底：350ms 内没有判定结果就按退出拦截处理
+        mContent.postDelayed(() -> {
+            if (!done[0]) exitTipShow();
+        }, 350);
     }
 
     // ---- 退出拦截：主界面按返回不直接退出，先弹小提示；5 秒窗口内再按才真正退出 ----
@@ -685,6 +917,8 @@ public class MainActivity extends Activity
 
     @Override
     protected void onDestroy() {
+        mMsgTick.removeCallbacks(mMsgTickR);
+        mContent.removeCallbacks(mUndoFadeR);
         // 身份比对后再清监听：重建时序"新 onCreate → 旧 onDestroy"，旧实例不能抹掉新实例的注册
         if (NotifyEngine.historyListener() == this) NotifyEngine.setHistoryListener(null);
         if (Theme.listener() == this) Theme.setListener(null);
@@ -778,18 +1012,7 @@ public class MainActivity extends Activity
         box.addView(buttonRow("重新配对（扫码 / 粘贴链接）", v -> showRePairDialog()));
 
         box.addView(sectionLabel("数据"));
-        box.addView(buttonRow("清空消息历史", v -> {
-            new android.app.AlertDialog.Builder(this)
-                    .setTitle("清空消息历史")
-                    .setMessage("确定清空全部历史记录？通知不受影响。")
-                    .setPositiveButton("清空", (d, w) -> {
-                        NotifyEngine.clearHistory();
-                        mAdapter.reload();
-                        updateMessageCount();
-                    })
-                    .setNegativeButton("取消", null)
-                    .show();
-        }));
+        // 「清空消息历史」已移入消息页右上角（一键直清，免确认），设置页不再保留入口
         box.addView(buttonRow("查看崩溃日志", v -> showCrashLog()));
         box.addView(buttonRow("用量信息（智谱官网）", v ->
                 startActivity(new Intent(this, UsageActivity.class))));
@@ -806,8 +1029,7 @@ public class MainActivity extends Activity
         }));
         TextView about = new TextView(this);
         about.setText("ZRemote v" + versionName() + "\n"
-                + "ZCode 远程控制增强壳 · 非官方项目，与 Z.ai 无隶属关系\n"
-                + "本地版图标版权归 Z.ai 所有，仅限本地个人使用");
+                + "ZCode 远程控制增强壳 · 非官方项目，与 Z.ai 无隶属关系");
         about.setTextColor(Theme.textSecondary());
         about.setTextSize(12);
         about.setPadding(0, (int) dp(4), 0, 0);
@@ -1237,13 +1459,37 @@ public class MainActivity extends Activity
     }
 
     // ---- 消息历史列表 ----
+    // 显示结构：日期分组头（今天/昨天/M月d日）+ 事件行。事件行包在 FrameLayout 里，
+    // 底层红底白字「删除」层平时被内容层盖住，左滑内容层露出（手势见 onListTouch）。
 
     private class HistoryAdapter extends BaseAdapter {
-        private ArrayList<JSONObject> items = new ArrayList<>();
+        private static final int TYPE_DAY = 0;
+        private static final int TYPE_EVENT = 1;
+        private final ArrayList<Object> items = new ArrayList<>(); // String=分组头 / JSONObject=事件
 
         void reload() {
-            items = NotifyEngine.historyDesc();
+            items.clear();
+            long today0 = dayStart(0), yest0 = dayStart(1);
+            String lastDay = null;
+            for (JSONObject ev : NotifyEngine.historyDesc()) {
+                String d = dayLabel(ev.optLong("ts", 0), today0, yest0);
+                if (!d.equals(lastDay)) {
+                    items.add(d);
+                    lastDay = d;
+                }
+                items.add(ev);
+            }
             notifyDataSetChanged();
+        }
+
+        @Override
+        public Object getItem(int position) {
+            return items.get(position);
+        }
+
+        JSONObject eventAt(int position) {
+            Object o = items.get(position);
+            return o instanceof JSONObject ? (JSONObject) o : null;
         }
 
         @Override
@@ -1252,8 +1498,13 @@ public class MainActivity extends Activity
         }
 
         @Override
-        public JSONObject getItem(int position) {
-            return items.get(position);
+        public int getViewTypeCount() {
+            return 2;
+        }
+
+        @Override
+        public int getItemViewType(int position) {
+            return items.get(position) instanceof String ? TYPE_DAY : TYPE_EVENT;
         }
 
         @Override
@@ -1263,32 +1514,46 @@ public class MainActivity extends Activity
 
         @Override
         public View getView(int position, View convertView, ViewGroup parent) {
-            LinearLayout row = (convertView instanceof LinearLayout)
-                    ? (LinearLayout) convertView : buildRow();
-            JSONObject ev = getItem(position);
+            if (getItemViewType(position) == TYPE_DAY) {
+                TextView day = (convertView instanceof TextView) ? (TextView) convertView : buildDayRow();
+                day.setText((String) items.get(position));
+                return day;
+            }
+            FrameLayout wrap = (convertView instanceof FrameLayout)
+                    ? (FrameLayout) convertView : buildEventRow();
+            LinearLayout row = (LinearLayout) wrap.getTag();
+            row.setTranslationX(0); // 复用复位：上一任持有者的滑动位移不能带过来
+            JSONObject ev = (JSONObject) items.get(position);
             String to = ev.optString("to", "");
             String icon = to.contains("错误") || to.contains("失败") ? "⚠️"
                     : to.contains("已完成") ? "✅" : "🆕";
             String title = icon + "  " + ev.optString("name", "任务");
             String from = ev.optString("from", "");
             String sub = (from.isEmpty() ? "新任务" : from + " → " + to)
-                    + " · " + DateUtils.getRelativeTimeSpanString(
-                            ev.optLong("ts", 0), System.currentTimeMillis(),
-                            DateUtils.MINUTE_IN_MILLIS).toString();
+                    + " · " + relativeTime(ev.optLong("ts", 0));
             TextView t = (TextView) row.getChildAt(0);
             TextView s = (TextView) row.getChildAt(1);
             t.setText(title);
             t.setTextColor(Theme.textPrimary());
             s.setText(sub);
             s.setTextColor(Theme.textSecondary());
-            return row;
+            return wrap;
         }
 
-        private LinearLayout buildRow() {
+        private TextView buildDayRow() {
+            TextView day = new TextView(MainActivity.this);
+            day.setTextSize(12);
+            day.setTextColor(Theme.textSecondary());
+            day.setPadding((int) dp(16), (int) dp(14), (int) dp(16), (int) dp(4));
+            return day;
+        }
+
+        private FrameLayout buildEventRow() {
             LinearLayout row = new LinearLayout(MainActivity.this);
             row.setOrientation(LinearLayout.VERTICAL);
             int p = (int) dp(16);
             row.setPadding(p, (int) dp(10), p, (int) dp(10));
+            row.setBackgroundColor(Theme.bg()); // 必须不透明：盖住底下的红色删除层
             TextView title = new TextView(MainActivity.this);
             title.setTextSize(15);
             TextView sub = new TextView(MainActivity.this);
@@ -1296,7 +1561,56 @@ public class MainActivity extends Activity
             sub.setPadding(0, (int) dp(3), 0, 0);
             row.addView(title);
             row.addView(sub);
-            return row;
+
+            TextView del = new TextView(MainActivity.this);
+            del.setText("删除");
+            del.setTextColor(0xFFFFFFFF);
+            del.setTextSize(14);
+            del.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+            del.setPadding(0, 0, (int) dp(24), 0);
+            del.setBackgroundColor(0xFFD32F2F);
+
+            FrameLayout wrap = new FrameLayout(MainActivity.this);
+            // 红底删除层必须 MATCH_PARENT 铺满整行高：WRAP_CONTENT 只有一行文字高，盖不满
+            wrap.addView(del, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            wrap.addView(row, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            wrap.setTag(row);
+            return wrap;
         }
+    }
+
+    private static long dayStart(int daysAgo) {
+        java.util.Calendar c = java.util.Calendar.getInstance();
+        c.set(java.util.Calendar.HOUR_OF_DAY, 0);
+        c.set(java.util.Calendar.MINUTE, 0);
+        c.set(java.util.Calendar.SECOND, 0);
+        c.set(java.util.Calendar.MILLISECOND, 0);
+        return c.getTimeInMillis() - daysAgo * 86_400_000L;
+    }
+
+    private static String dayLabel(long ts, long today0, long yest0) {
+        if (ts >= today0) return "今天";
+        if (ts >= yest0) return "昨天";
+        java.util.Calendar c = java.util.Calendar.getInstance();
+        c.setTimeInMillis(ts);
+        return (c.get(java.util.Calendar.MONTH) + 1) + "月" + c.get(java.util.Calendar.DAY_OF_MONTH) + "日";
+    }
+
+    /** 相对时间：现在 / N分钟前 / N小时前 / 昨天 HH:mm / M月d日 HH:mm（替代系统的「0分钟前」）。 */
+    private static String relativeTime(long ts) {
+        long diff = System.currentTimeMillis() - ts;
+        if (diff < 60_000L) return "现在";
+        if (diff < 3_600_000L) return (diff / 60_000L) + "分钟前";
+        java.util.Calendar c = java.util.Calendar.getInstance();
+        c.setTimeInMillis(ts);
+        String hm = String.format(java.util.Locale.CHINA, "%02d:%02d",
+                c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE));
+        long yest0 = dayStart(1);
+        if (diff < 86_400_000L && ts >= yest0) return (diff / 3_600_000L) + "小时前";
+        if (ts >= yest0) return "昨天 " + hm;
+        return (c.get(java.util.Calendar.MONTH) + 1) + "月"
+                + c.get(java.util.Calendar.DAY_OF_MONTH) + "日 " + hm;
     }
 }
