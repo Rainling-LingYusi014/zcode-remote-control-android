@@ -1024,7 +1024,8 @@ public class MainActivity extends Activity
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         int p = (int) dp(16);
-        box.setPadding(p, (int) dp(12), p, (int) dp(16));
+        // 顶部多留 44dp：给右上角浮动扫码钮让位，首行控件不被遮住
+        box.setPadding(p, (int) dp(56), p, (int) dp(16));
 
         box.addView(sectionLabel("通知"));
         box.addView(switchRow("桌面直推",
@@ -1122,7 +1123,20 @@ public class MainActivity extends Activity
 
         sv.addView(box, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
-        return sv;
+
+        // 右上角常驻扫码钮：与面板右上角同一个图标、同一个入口（首次登录页异常时的备用通道）。
+        // 内容区顶部留出空间，避免第一行开关被浮钮压住。
+        FrameLayout wrap = new FrameLayout(this);
+        wrap.setBackgroundColor(Theme.bg());
+        wrap.addView(sv, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        View scan = PanelController.newScanIcon(this, this::startScanPairing);
+        FrameLayout.LayoutParams scanLp = new FrameLayout.LayoutParams(
+                (int) dp(40), (int) dp(40), Gravity.TOP | Gravity.END);
+        scanLp.topMargin = (int) dp(10);
+        scanLp.rightMargin = (int) dp(10);
+        wrap.addView(scan, scanLp);
+        return wrap;
     }
 
     private String versionName() {

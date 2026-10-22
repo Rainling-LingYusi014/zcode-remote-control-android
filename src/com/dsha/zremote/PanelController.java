@@ -11,6 +11,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Environment;
 import android.content.MutableContextWrapper;
@@ -83,9 +84,7 @@ public final class PanelController {
 
         // 右上角扫码钮：桌面端刷新二维码作废旧会话时随时可重连。
         // 平时隐藏（避免遮挡正常界面），注入脚本检测到"等待配对/连接中断/校验失败"等状态时出现
-        View corner = new QrScanIconView(sCtxWrapper);
-        corner.setContentDescription("扫码配对");
-        corner.setOnClickListener(v -> {
+        View corner = newScanIcon(sCtxWrapper, () -> {
             if (sOnScan != null) sOnScan.run();
         });
         corner.setVisibility(View.GONE);
@@ -152,18 +151,26 @@ public final class PanelController {
         // 单设备限制 + z.ai（全球）登录容易异常，推荐 bigmodel 国内账号
         TextView loginHint = new TextView(sCtxWrapper);
         loginHint.setText("建议优先使用 bigmodel（智谱国内）账号登录\n"
-                + "z.ai（全球）登录在重扫二维码 / 更换设备时容易异常（同一会话仅支持一台设备）");
-        loginHint.setTextColor(0xFF8A97A0);
+                + "z.ai（全球）登录在重扫二维码 / 更换设备时容易异常（同一会话仅支持一台设备）\n"
+                + "若登录页无法打开，请到「设置」页右上角扫码登录");
+        loginHint.setTextColor(0xFFD7E0E6);
         loginHint.setTextSize(12);
         loginHint.setGravity(Gravity.CENTER);
         loginHint.setLineSpacing(dp(3), 1f);
-        int hintPad = (int) dp(20);
-        loginHint.setPadding(hintPad, 0, hintPad, 0);
+        int hintPad = (int) dp(14);
+        loginHint.setPadding(hintPad, (int) dp(10), hintPad, (int) dp(10));
+        // 80% 不透明深底（0xCC ≈ 204/255），保证提示在官方登录页任何底色上都读得清
+        GradientDrawable hintBg = new GradientDrawable();
+        hintBg.setColor(0xCC0A0E12);
+        hintBg.setCornerRadius(dp(10));
+        loginHint.setBackground(hintBg);
         loginHint.setVisibility(View.GONE);
         FrameLayout.LayoutParams hintLp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
         hintLp.bottomMargin = (int) dp(56);
+        hintLp.leftMargin = (int) dp(20);
+        hintLp.rightMargin = (int) dp(20);
         root.addView(loginHint, hintLp);
         sLoginHint = loginHint;
         return root;
@@ -277,6 +284,16 @@ public final class PanelController {
         if (sCorner != null) sCorner.setVisibility(show ? View.VISIBLE : View.GONE);
         if (sHelp != null) sHelp.setVisibility(show ? View.VISIBLE : View.GONE);
         if (sGh != null) sGh.setVisibility(show ? View.VISIBLE : View.GONE);
+    }
+
+    /** 扫码钮（面板右上角与设置页共用）：图案、行为完全一致，避免两处各画一份走样。 */
+    static View newScanIcon(Context ctx, Runnable onClick) {
+        View v = new QrScanIconView(ctx);
+        v.setContentDescription("扫码配对");
+        v.setOnClickListener(x -> {
+            if (onClick != null) onClick.run();
+        });
+        return v;
     }
 
     /** 右上角 ? 帮助钮：圆环跨度与扫码框四角跨度一致（0.6s），线宽颜色同扫码线条。 */
@@ -477,8 +494,11 @@ public final class PanelController {
                         view.evaluateJavascript(
                                 "window.__zrcTok=\"" + tok + "\";" + NotifyEngine.INJECT_JS, null);
                     }
-                    // 只保存真正的会话链接（/remote/...?sid=…），官网首页不算（仅存 APP 私有目录）
-                    if (url.contains("/remote")) {
+                    // 会话落地判定与 updatePill 同一口径：/remote、/connect 或带 token= 的链接都算。
+                    // 只看 /remote 会漏掉 /connect 型配对链接 → 明明连上了仍被当"首次登录"，
+                    // 提示反复出现、扫码/粘贴入口也不亮
+                    String lu = url.toLowerCase();
+                    if (lu.contains("token=") || lu.contains("/remote") || lu.contains("/connect")) {
                         // 落地过会话页＝完成过一次登录；登录前不亮扫码/粘贴入口（首次使用不挡登录 UI）
                         sPrefs.edit().putString("last_url", url)
                                 .putBoolean("ever_logged_in", true).apply();
