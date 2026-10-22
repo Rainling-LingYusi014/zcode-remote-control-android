@@ -32,6 +32,7 @@ public final class NotifyEngine {
     /** v1 的 L2 前台服务渠道 id，v1.2.0 起不再创建，仅用于清理老安装的残留渠道。 */
     private static final String CH_SERVICE_LEGACY = "service";
     private static final int MAX_HISTORY = 200;
+    private static final String TAG = "ZRemote";
     /** 三源去重窗口：同任务同终态 150s 内视为重复（L1 注入 / v2 直推 / L3 兜底重叠）。 */
     private static final long DEDUP_WINDOW_MS = 150_000L;
     private static final int DEDUP_SCAN = 50;
@@ -143,26 +144,32 @@ public final class NotifyEngine {
         try {
             JSONArray arr = new JSONArray(json);
             for (int i = 0; i < arr.length(); i++) {
-                JSONObject ev = arr.getJSONObject(i);
-                String to = ev.optString("to", "");
-                // 终态白名单兜底（2026-10-21 幽灵事件回归）：注入侧已跳过读不到状态的卡，
-                // 这里再拦 L2 ntfy 直推等其余来源的空/脏状态，杜绝「已完成→空」假条目。
-                if (!to.matches("已完成|运行中|错误|失败|等待|排队|进行中")) continue;
-                String name = ev.optString("name", "任务");
-                if (isDuplicate(ev, to)) continue;
-                ev.put("ts", System.currentTimeMillis());
-                sHistory.add(ev);
-                if (to.contains("已完成")) {
-                    post(ev, CH_DONE, "✅ 任务完成：" + name);
-                } else if (to.contains("错误") || to.contains("失败")) {
-                    post(ev, CH_ALERT, "⚠️ 任务出错：" + name);
+                // 逐条兜底：单条坏数据只跳过自己，不拖垮整批（审查 #19）
+                try {
+                    JSONObject ev = arr.getJSONObject(i);
+                    String to = ev.optString("to", "");
+                    // 终态白名单兜底（2026-10-21 幽灵事件回归）：注入侧已跳过读不到状态的卡，
+                    // 这里再拦 L2 ntfy 直推等其余来源的空/脏状态，杜绝「已完成→空」假条目。
+                    if (!to.matches("已完成|运行中|错误|失败|等待|排队|进行中")) continue;
+                    String name = ev.optString("name", "任务");
+                    if (isDuplicate(ev, to)) continue;
+                    ev.put("ts", System.currentTimeMillis());
+                    sHistory.add(ev);
+                    if (to.contains("已完成")) {
+                        post(ev, CH_DONE, "✅ 任务完成：" + name);
+                    } else if (to.contains("错误") || to.contains("失败")) {
+                        post(ev, CH_ALERT, "⚠️ 任务出错：" + name);
+                    }
+                    // 新任务 / 变回运行中：只记历史，不打扰
+                } catch (Exception bad) {
+                    android.util.Log.w(TAG, "跳过坏事件条目：" + bad);
                 }
-                // 新任务 / 变回运行中：只记历史，不打扰
             }
             trimAndSave();
             notifyHistoryListener();
-        } catch (Exception ignored) {
-            // 单条坏数据不至于拖垮引擎
+        } catch (Exception e) {
+            // 整批解析失败至少留痕，否则静默丢通知无从排查
+            android.util.Log.w(TAG, "事件批次解析失败：" + e);
         }
     }
 
@@ -222,7 +229,8 @@ public final class NotifyEngine {
                     .setContentIntent(pi)
                     .build();
             nm.notify((ev.optString("id", "x") + channel).hashCode(), n);
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            android.util.Log.w(TAG, "通知发送失败：" + e);
         }
     }
 
@@ -275,7 +283,8 @@ public final class NotifyEngine {
             try (FileOutputStream out = new FileOutputStream(f)) {
                 out.write(arr.toString().getBytes(StandardCharsets.UTF_8));
             }
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            android.util.Log.w(TAG, "历史落盘失败：" + e);
         }
     }
 
@@ -291,7 +300,8 @@ public final class NotifyEngine {
             }
             JSONArray arr = new JSONArray(sb.toString());
             for (int i = 0; i < arr.length(); i++) sHistory.add(arr.getJSONObject(i));
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            android.util.Log.w(TAG, "历史读取失败（已按空历史启动）：" + e);
         }
     }
 
@@ -324,11 +334,17 @@ public final class NotifyEngine {
         "else if(o.s!==n.s){ev.push({t:'status',id:id,name:n.n,from:o.s,to:n.s});}}" +
         "return ev;}" +
         "function isEmpty(o){for(var k in o)return false;return true;}" +
+        // 换工作区/账号时列表是"非空→非空全量替换"：新旧 id 无交集。这属于列表重建，
+        // 不是任务状态变化，按新任务重报会把别的 workspace 的历史任务全弹一遍（审查 R3）
+        "function noOverlap(a,b){if(!a||!b)return false;var an=false;" +
+        "for(var k in a){an=true;if(b[k])return false;}" +
+        "for(var k in b){return an;}return false;}" +
         // 切详情页/渲染空隙时任务卡整体卸载、快照变空：绝不能拿空快照覆盖已有基线，
         // 否则切回列表会把全部任务当成"新出现"重报（审查 P1-3，幽灵消息第二来源）
         "function fire(){timer=null;var s=snapshot();" +
         "try{window.__zrcKeepBtn();}catch(e){}" +
         "if(isEmpty(s)&&last&&!isEmpty(last))return;" +
+        "if(noOverlap(last,s)){last=s;persist();return;}" +
         "var ev=diff(last,s);last=s;persist();" +
         "if(ev.length>10)return;" +
         "if(ev.length&&window.zrcBridge&&window.zrcBridge.onEvents){" +
@@ -375,8 +391,9 @@ public final class NotifyEngine {
         "setInterval(autoReconnect,3000);" +
         "function checkTheme(){var d=themeNow();if(d!==lastTheme){lastTheme=d;" +
         "try{window.zrcBridge.onTheme(d,window.__zrcTok);}catch(e){}}}" +
-        "window.__zrcOpenTask = function(tid){try{var c=document.querySelector('[data-testid=\"'+tid+'\"]');" +
-        "if(c){c.click();return 'ok';}return 'nolist';}catch(e){return 'err';}};" +
+        "window.__zrcOpenTask = function(tid){try{var cs=document.querySelectorAll('[data-testid]');" +
+        "for(var i=0;i<cs.length;i++){if(cs[i].getAttribute('data-testid')===tid){" +
+        "cs[i].click();return 'ok';}}return 'nolist';}catch(e){return 'err';}};" +
         "window.__zrcListTasks = function(){var out=[];var cs=document.querySelectorAll('[data-testid^=\"task-item-\"]');" +
         "for(var i=0;i<cs.length;i++){out.push({tid:cs[i].getAttribute('data-testid'),n:nameOf(cs[i]),s:statusOf(cs[i])});}return out;};" +
         "window.__zrcCheckTheme = checkTheme;" +

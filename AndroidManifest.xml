@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.dsha.zremote"
-    android:versionCode="32"
-    android:versionName="1.2.8">
+    android:versionCode="33"
+    android:versionName="1.2.9">
 
     <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="33" />
 
@@ -38,7 +38,6 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" android:host="zcode.z.ai" />
-                <data android:scheme="http" android:host="zcode.z.ai" />
             </intent-filter>
             <!-- 分享接管：在浏览器里"分享"给 Zcode RC 也能进会话 -->
             <intent-filter>

@@ -812,6 +812,22 @@ public class MainActivity extends Activity
         }
     }
 
+    /** 用户拒绝过系统通知后不再弹窗，给一条直达系统设置的入口（审查 R4f）。 */
+    private void openNotificationSettings() {
+        try {
+            startActivity(new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName()));
+        } catch (Exception e) {
+            try {
+                startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:" + getPackageName())));
+            } catch (Exception ignored) {
+                android.widget.Toast.makeText(this, "请到系统设置 → 通知 中手动开启",
+                        android.widget.Toast.LENGTH_LONG).show();
+            }
+        }
+    }
+
     // ---- 扫码配对 ----
 
     private void startScanPairing() {
@@ -1092,6 +1108,10 @@ public class MainActivity extends Activity
         box.addView(mHeartbeat);
 
         box.addView(sectionLabel("系统权限"));
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            box.addView(buttonRow("系统通知权限未开启 → 点此去开启", v -> openNotificationSettings()));
+        }
         box.addView(buttonRow("后台权限引导（MIUI / HyperOS）", v -> showKeepAliveGuide()));
 
         box.addView(sectionLabel("会话"));
@@ -1246,7 +1266,7 @@ public class MainActivity extends Activity
                 + "三、网络通信对象仅限\n"
                 + "· z.ai 系官方域名（zcode.z.ai 远程控制；含 OAuth 登录授权域 chat.z.ai 等子域）\n"
                 + "· bigmodel.cn 系官方域名（智谱官方用量页）\n"
-                + "· 为支持官方 OAuth 登录链路，对上述官方子域启用了跨子域第三方 Cookie\n"
+                + "· 为支持官方 OAuth 登录链路，对本应用内加载的全部页面及其内嵌 iframe 启用了第三方 Cookie\n"
                 + "· 页面内触发的文件下载经系统下载管理器进行，目标为上述官方域名主机\n"
                 + "· 你配置的 ntfy 服务器（默认公共 ntfy.sh）：仅当开启\"桌面直推\"时，"
                 + "任务标题（默认为会话首条输入的截断文本）、状态变化与错误消息摘要经其转发，"
@@ -1446,9 +1466,18 @@ public class MainActivity extends Activity
             }
         } catch (Exception ignored) {
         }
-        wrapDialog(et, "直推 Topic", "与桌面端 watcher 配置里的 topic 完全一致（随机长串，即凭据，勿外传）。")
+        wrapDialog(et, "直推 Topic", "与桌面端 watcher 配置里的 topic 完全一致（随机长串，即凭据，勿外传）。"
+                        + "\n只允许字母、数字、下划线与短横线，最长 64 位。")
                 .setPositiveButton("保存", (d, w) -> {
-                    AppSettings.setNtfyTopic(this, et.getText().toString());
+                    String t = et.getText().toString().trim();
+                    // 特殊字符直接拼进 URL 会改变请求形状，保存前先拒（审查 #10）
+                    if (!AppSettings.isValidTopic(t)) {
+                        android.widget.Toast.makeText(this,
+                                "Topic 只能含字母/数字/_/-，且 1-64 位；未保存",
+                                android.widget.Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    AppSettings.setNtfyTopic(this, t);
                     swapSettingsView(buildSettingsView());
                 })
                 .setNegativeButton("取消", null)
@@ -1464,7 +1493,7 @@ public class MainActivity extends Activity
                 msg = n > 0 ? "拉取成功，收到 " + n + " 条新事件"
                         : "拉取成功，暂无新事件（先在电脑端 curl /zrc/test 发一条试试）";
             } catch (Exception e) {
-                msg = "拉取失败：" + e.getMessage();
+                msg = "拉取失败：" + AppSettings.redact(this, e.getMessage());
             }
             final String m = msg;
             runOnUiThread(() -> {
@@ -1538,6 +1567,8 @@ public class MainActivity extends Activity
     private void swapSettingsView(View newView) {
         int idx = mContent.indexOfChild(mSettingsView);
         mContent.removeView(mSettingsView);
+        // indexOfChild 返回 -1（尚未挂载）时 addView(view, -1) 会抛 IndexOutOfBounds（审查 R4c）
+        if (idx < 0 || idx > mContent.getChildCount()) idx = mContent.getChildCount();
         mContent.addView(newView, idx);
         mSettingsView = newView;
         mSettingsView.setVisibility(mTab == TAB_SETTINGS ? View.VISIBLE : View.GONE);

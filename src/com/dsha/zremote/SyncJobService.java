@@ -64,7 +64,8 @@ public class SyncJobService extends JobService {
             if (wv != null) {
                 try {
                     String cur = wv.getUrl();
-                    if (cur != null && cur.contains("/remote")) {
+                    // 用与会话判定同一口径（https + 精确主机），/connect 型链接也算会话页
+                    if (cur != null && PanelController.isSessionUrl(cur)) {
                         // 会话页还活着：直接触发一次 diff
                         wv.evaluateJavascript("if(window.__zrcFire)window.__zrcFire();", null);
                     } else {

@@ -34,6 +34,12 @@ public class UsageActivity extends Activity {
         s.setDomStorageEnabled(true);
         s.setTextZoom(100);
         s.setForceDark(WebSettings.FORCE_DARK_OFF);
+        // 与主面板同一套显式防御，不依赖 targetSdk 默认值（审查 #18）
+        s.setAllowFileAccess(false);
+        s.setAllowContentAccess(false);
+        s.setAllowFileAccessFromFileURLs(false);
+        s.setAllowUniversalAccessFromFileURLs(false);
+        s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         CookieManager.getInstance().setAcceptCookie(true);
 
         wv.setWebViewClient(new WebViewClient() {
@@ -44,11 +50,39 @@ public class UsageActivity extends Activity {
                 if (PanelController.inAppHost(u.getHost())) {
                     return false;
                 }
+                openOutside(u);
+                return true;
+            }
+
+            // 服务端 302 不经过 shouldOverrideUrlLoading：落点校验放在 start/commit 两层，
+            // 否则外域页会在无地址栏的本页内渲染（审查 #18 新增观察）
+            @Override
+            public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                checkLanding(view, url);
+            }
+
+            @Override
+            public void onPageCommitVisible(WebView view, String url) {
+                checkLanding(view, url);
+            }
+
+            private void checkLanding(WebView view, String url) {
+                if (url == null) return;
+                String cur = view.getUrl();
+                if (cur != null && !cur.equals(url)) return; // 子帧提交，忽略
+                if (!url.startsWith("http://") && !url.startsWith("https://")) return;
+                Uri u = Uri.parse(url);
+                if (!PanelController.inAppHost(u.getHost())) {
+                    view.stopLoading();
+                    openOutside(u);
+                }
+            }
+
+            private void openOutside(Uri u) {
                 try {
                     startActivity(new Intent(Intent.ACTION_VIEW, u));
                 } catch (Exception ignored) {
                 }
-                return true;
             }
         });
         wv.loadUrl(USAGE_URL);

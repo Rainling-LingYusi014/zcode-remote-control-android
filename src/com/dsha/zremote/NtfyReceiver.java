@@ -22,8 +22,14 @@ import java.nio.charset.StandardCharsets;
  */
 final class NtfyReceiver {
 
+    private static final String TAG = "ZRemote";
+    /** 流式订阅读超时：兜底防止长连接假死后再也醒不过来（审查 #11）。 */
+    private static final int STREAM_READ_TIMEOUT_MS = 10 * 60_000;
+
     private static Thread sSubThread;
     private static volatile boolean sSubWanted = false;
+    /** 当前流式连接：unsubscribe 时主动断开，让阻塞在 readLine 的线程立刻退出。 */
+    private static volatile HttpURLConnection sConn;
 
     private NtfyReceiver() {}
 
@@ -41,6 +47,13 @@ final class NtfyReceiver {
 
     static void unsubscribe() {
         sSubWanted = false;
+        HttpURLConnection c = sConn;
+        if (c != null) {
+            try {
+                c.disconnect(); // 打断阻塞中的 readLine，线程立即走退出分支
+            } catch (Exception ignored) {
+            }
+        }
     }
 
     private static synchronized void startThread(final Context app) {
@@ -67,6 +80,7 @@ final class NtfyReceiver {
 
     private static void streamOnce(Context app) throws Exception {
         HttpURLConnection conn = open(app, false);
+        sConn = conn;
         try {
             BufferedReader r = new BufferedReader(
                     new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));
@@ -76,6 +90,7 @@ final class NtfyReceiver {
             }
             advanceBase(app);
         } finally {
+            sConn = null;
             conn.disconnect();
         }
     }
@@ -112,12 +127,23 @@ final class NtfyReceiver {
         // 手机与 ntfy 服务器有秒级时钟差时，该窗口内可能漏 1-2 条，属已知边界（有 id 后即精确）。
         String since = !lastId.isEmpty() ? lastId
                 : String.valueOf(p.getLong("ntfy_base_ts", System.currentTimeMillis() / 1000));
-        URL u = new URL(server + "/" + topic + "/json?since=" + since + (poll ? "&poll=1" : ""));
+        // topic / since 都要编码后再拼：特殊字符会改变请求形状（审查 #10）
+        String urlText = server + "/" + enc(topic) + "/json?since=" + enc(since)
+                + (poll ? "&poll=1" : "");
+        URL u = new URL(urlText);
         HttpURLConnection conn = (HttpURLConnection) u.openConnection();
         conn.setConnectTimeout(15000);
-        conn.setReadTimeout(poll ? 20000 : 0); // 流式订阅：无限读等
+        conn.setReadTimeout(poll ? 20000 : STREAM_READ_TIMEOUT_MS);
         conn.setRequestProperty("Accept", "application/json");
         return conn;
+    }
+
+    private static String enc(String s) {
+        try {
+            return java.net.URLEncoder.encode(s, "UTF-8");
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     /** 成功读完一轮后推进时间水位：此后到达的消息一定晚于下次 since。 */
@@ -143,7 +169,8 @@ final class NtfyReceiver {
                     .putLong("ntfy_last_at", System.currentTimeMillis()).apply();
             mergeSnapshot(app, ev);
             return true;
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            android.util.Log.w(TAG, "ntfy 坏行已跳过：" + e);
             return false;
         }
     }
@@ -169,7 +196,7 @@ final class NtfyReceiver {
 
     static void setResult(Context c, String result) {
         prefs(c).edit()
-                .putString("ntfy_last_result", result)
+                .putString("ntfy_last_result", AppSettings.redact(c, result))
                 .putLong("ntfy_last_at", System.currentTimeMillis()).apply();
     }
 

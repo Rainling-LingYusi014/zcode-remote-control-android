@@ -60,23 +60,30 @@ public final class AppLock {
 
     /** 剩余退避时间（毫秒，0=现在可以尝试）。 */
     public static long lockoutRemainingMs(Context c) {
-        long until = p(c).getLong("lock_until", 0L);
-        long now = System.currentTimeMillis();
-        return until > now ? until - now : 0L;
+        SharedPreferences p = p(c);
+        long wall = p.getLong("lock_until", 0L) - System.currentTimeMillis();
+        long elapsed = p.getLong("lock_until_elapsed", 0L) - android.os.SystemClock.elapsedRealtime();
+        // 双水位取较大值：改系统时间往前拨只能骗过 wall，骗不过 elapsed（审查 R4e）。
+        // 两个值都只在 0~上限内可信：单个值超过退避上限说明对应时钟被动过/重启归零，弃用该水位
+        if (wall > MAX_DELAY_MS || wall < 0) wall = 0;
+        if (elapsed > MAX_DELAY_MS || elapsed < 0) elapsed = 0;
+        return Math.max(wall, elapsed);
     }
 
     public static boolean verify(Context c, String pin) {
         if (lockoutRemainingMs(c) > 0) return false;
         boolean ok = matches(c, pin);
         if (ok) {
-            p(c).edit().remove("lock_fails").remove("lock_until").apply();
+            p(c).edit().remove("lock_fails").remove("lock_until")
+                    .remove("lock_until_elapsed").apply();
         } else {
             int fails = p(c).getInt("lock_fails", 0) + 1;
             android.content.SharedPreferences.Editor e = p(c).edit().putInt("lock_fails", fails);
             if (fails >= FREE_TRIES) {
-                long delay = BASE_DELAY_MS << Math.min(fails - FREE_TRIES, 5);
-                e.putLong("lock_until",
-                        System.currentTimeMillis() + Math.min(delay, MAX_DELAY_MS));
+                long delay = Math.min(BASE_DELAY_MS << Math.min(fails - FREE_TRIES, 5), MAX_DELAY_MS);
+                e.putLong("lock_until", System.currentTimeMillis() + delay)
+                        .putLong("lock_until_elapsed",
+                                android.os.SystemClock.elapsedRealtime() + delay);
             }
             e.apply();
         }
@@ -99,7 +106,7 @@ public final class AppLock {
 
     public static void clear(Context c) {
         p(c).edit().remove("lock_hash").remove("lock_salt")
-                .remove("lock_fails").remove("lock_until")
+                .remove("lock_fails").remove("lock_until").remove("lock_until_elapsed")
                 .putBoolean("lock_enabled", false).apply();
     }
 

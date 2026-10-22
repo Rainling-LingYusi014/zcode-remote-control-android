@@ -30,10 +30,10 @@ for f in "$ANDROID_JAR" "$AAPT2" "$D8_JAR" "$ZIPALIGN" "$APKSIGNER_JAR"; do
   [ -f "$f" ] || { echo "缺少构建工具：$f" >&2; exit 1; }
 done
 
-# 二维码识别库（扫码配对用，Apache-2.0，约 600KB）；SHA-1 固定为 Maven Central 官方值，
-# 每次构建校验，防镜像劫持/缓存投毒产出带毒 APK（审查 P2-3）
+# 二维码识别库（扫码配对用，Apache-2.0，约 600KB）；SHA-256 固定为官方发行值，
+# 每次构建校验，防镜像劫持/缓存投毒产出带毒 APK（审查 #15：SHA-1 → SHA-256）
 ZXING_JAR="$TC/zxing-core-3.5.3.jar"
-ZXING_SHA1="ca1349214a356cd7958651b2d5a0e1f3811a9c4b"
+ZXING_SHA256="8d8064c1636fdaef7189dd9055c7d59950a8940a12f2293956446ec3c109fd82"
 if [ ! -f "$ZXING_JAR" ]; then
   echo "== 0/6 下载 zxing-core-3.5.3.jar"
   curl -fL --retry 2 -o "$ZXING_JAR" \
@@ -42,8 +42,8 @@ if [ ! -f "$ZXING_JAR" ]; then
       "https://repo1.maven.org/maven2/com/google/zxing/core/3.5.3/core-3.5.3.jar"
 fi
 [ -f "$ZXING_JAR" ] || { echo "缺少依赖库：$ZXING_JAR" >&2; exit 1; }
-echo "$ZXING_SHA1  $ZXING_JAR" | sha1sum -c - >/dev/null 2>&1 ||
-  { echo "zxing-core-3.5.3.jar 校验失败：与官方 SHA-1 不符，请删除后重新下载" >&2; exit 1; }
+echo "$ZXING_SHA256  $ZXING_JAR" | sha256sum -c - >/dev/null 2>&1 ||
+  { echo "zxing-core-3.5.3.jar 校验失败：与官方 SHA-256 不符，请删除后重新下载" >&2; exit 1; }
 
 OUT="${OUT:-build}"
 # javac 诊断输出统一英文，避免 GBK 乱码
@@ -120,10 +120,13 @@ else
   OUT_APK="$OUT/zremote-release.apk"
 fi
 KS_PASS="${ZREMOTE_KS_PASS:-$(cat "$KS_PASS_FILE" 2>/dev/null || true)}"
+# 密码文件只给自己可读（审查 #15；Git Bash 下的 chmod 尽力而为）
+[ -f "$KS_PASS_FILE" ] && chmod 600 "$KS_PASS_FILE" 2>/dev/null || true
 if [ ! -f "$KS_FILE" ]; then
   if [ -z "$KS_PASS" ]; then
     KS_PASS="$(openssl rand -hex 16 2>/dev/null || head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
     printf '%s' "$KS_PASS" > "$KS_PASS_FILE"
+    chmod 600 "$KS_PASS_FILE" 2>/dev/null || true
   fi
   "$KEYTOOL" -genkeypair -keystore "$KS_FILE" -alias "$KS_ALIAS" -keyalg RSA -keysize 2048 \
     -validity 10000 -storepass "$KS_PASS" -keypass "$KS_PASS" \

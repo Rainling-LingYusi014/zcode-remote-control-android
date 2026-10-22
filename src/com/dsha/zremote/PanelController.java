@@ -272,6 +272,54 @@ public final class PanelController {
         }
     }
 
+    /** 会话页下发 token + 注入脚本；幂等（INJECT_JS 自带 __zrcInstalled 短路）。 */
+    private static void injectSessionScript(WebView view) {
+        String tok = sBridgeToken;
+        if (tok == null) {
+            tok = newToken();
+            sBridgeToken = tok;
+        }
+        view.evaluateJavascript("window.__zrcTok=\"" + tok + "\";" + NotifyEngine.INJECT_JS, null);
+    }
+
+    /**
+     * 带授权特征的会话链接：路径前缀 /remote、/connect，或精确的 token / access_token 参数名。
+     * 只用于"是否算登录过"与底部操作钮显隐，安全判定仍走 {@link #isSessionUrl}。
+     */
+    private static boolean isSessionLikeUrl(String url) {
+        if (!isSessionUrl(url)) return false;
+        try {
+            Uri u = Uri.parse(url);
+            String path = u.getPath();
+            if (path != null && (path.startsWith("/remote") || path.startsWith("/connect"))) return true;
+            String frag = u.getFragment();
+            String fp = frag == null ? "" : frag;
+            if (fp.startsWith("/")) fp = fp.substring(1);
+            if (fp.startsWith("remote") || fp.startsWith("connect")) return true;
+            return hasTokenParam(u.getQuery()) || hasTokenParam(frag);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** 参数名完全相等才算（避免 xtoken= / token_x= 误命中）。 */
+    private static boolean hasTokenParam(String s) {
+        if (s == null || s.isEmpty()) return false;
+        for (String kv : s.split("[&#?;]")) {
+            int eq = kv.indexOf('=');
+            String k = eq < 0 ? kv : kv.substring(0, eq);
+            if ("token".equals(k) || "access_token".equals(k)) return true;
+        }
+        return false;
+    }
+
+    /** 隐藏右上角三个浮动钮（扫码/帮助/GitHub），离开会话页时调用。 */
+    private static void hideCorner() {
+        if (sCorner != null) sCorner.setVisibility(View.GONE);
+        if (sHelp != null) sHelp.setVisibility(View.GONE);
+        if (sGh != null) sGh.setVisibility(View.GONE);
+    }
+
     /** 注入脚本回报"等待桌面端配对"：仅死会话/等待页显示右上角扫码钮，正常界面不遮挡。JS 桥线程调用。 */
     static void onPairingWait(boolean waiting) {
         android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
@@ -455,7 +503,7 @@ public final class PanelController {
 
             @Override
             public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
-                sCurrentUrl = url; // 服务端 302 的落点也会走到这里，快照必须先于注入更新
+                sCurrentUrl = url; // 先更新快照再做注入判定；302 链只在链首触发本回调，落点见 onPageCommitVisible
                 if (isSessionUrl(url)) {
                     // 每次进入会话主帧换新 token，注入脚本带着它调用桥；跨域子帧拿不到
                     String tok = newToken();
@@ -475,6 +523,33 @@ public final class PanelController {
                         view.stopLoading();
                         openExternal(u);
                     }
+                    hideCorner(); // 离开会话页（如 OAuth 中转）：角标不再有意义，避免旧状态滞留
+                }
+            }
+
+            /**
+             * 主帧提交时的落点校验（审查 R2）：服务端 302 链不会再次触发 onPageStarted，
+             * 只有 commit 这一层能拿到最终落点。url 与 getUrl() 相同才算主帧提交——
+             * 页内第三方子帧（如验证码容器）提交时两者不同，绝不能因此停掉整个页面。
+             */
+            @Override
+            public void onPageCommitVisible(WebView view, String url) {
+                if (url == null) return;
+                String cur = view.getUrl();
+                if (cur != null && !cur.equals(url)) return; // 子帧提交，忽略
+                sCurrentUrl = url;
+                if (isSessionUrl(url)) {
+                    injectSessionScript(view);
+                    return;
+                }
+                sBridgeToken = null;
+                if (url.startsWith("http://") || url.startsWith("https://")) {
+                    Uri u = Uri.parse(url);
+                    if (!inAppHost(u.getHost())) {
+                        view.stopLoading();
+                        openExternal(u);
+                        hideCorner();
+                    }
                 }
             }
 
@@ -487,22 +562,19 @@ public final class PanelController {
             public void onPageFinished(WebView view, String url) {
                 sCurrentUrl = url;
                 if (isSessionUrl(url)) {
-                    // 兜底：SPA/慢加载时 onPageStarted 的注入可能落空，这里同一 token 再下发一次
-                    // （INJECT_JS 自带 __zrcInstalled 短路，重复执行无副作用）
-                    String tok = sBridgeToken;
-                    if (tok != null) {
-                        view.evaluateJavascript(
-                                "window.__zrcTok=\"" + tok + "\";" + NotifyEngine.INJECT_JS, null);
-                    }
-                    // 会话落地判定与 updatePill 同一口径：/remote、/connect 或带 token= 的链接都算。
-                    // 只看 /remote 会漏掉 /connect 型配对链接 → 明明连上了仍被当"首次登录"，
-                    // 提示反复出现、扫码/粘贴入口也不亮
-                    String lu = url.toLowerCase();
-                    if (lu.contains("token=") || lu.contains("/remote") || lu.contains("/connect")) {
+                    // 兜底：SPA/慢加载时 onPageStarted 的注入可能落空；302 中转进入会话页时
+                    // onPageStarted 只在链首触发、token 已被上一跳清空——这里补生成再注入，
+                    // 否则 OAuth 登录落地页没有脚本，通知/搜索/主题/断连检测全部失效（审查 R1）
+                    injectSessionScript(view);
+                    // 会话落地判定（审查 R4a）：路径前缀 /remote、/connect 或精确的 token 参数名，
+                    // 不再用 contains("token=") 这类子串匹配（/blog/how-to-connect 会误命中）
+                    if (isSessionLikeUrl(url)) {
                         // 落地过会话页＝完成过一次登录；登录前不亮扫码/粘贴入口（首次使用不挡登录 UI）
                         sPrefs.edit().putString("last_url", url)
                                 .putBoolean("ever_logged_in", true).apply();
                     }
+                } else {
+                    sBridgeToken = null; // 落在非会话页：不保留上一页的 token（审查 R2a）
                 }
                 updatePill(url);
             }
@@ -513,6 +585,12 @@ public final class PanelController {
                                              FileChooserParams params) {
                 if (sFileCb != null) sFileCb.onReceiveValue(null); // 释放上次未完成的回调
                 sFileCb = cb;
+                // Job 冷启动时进程里可能没有 Activity：直接拒绝，别让页面等一个永远不来的回调（审查 #12）
+                if (sActivity == null || sActivity.isFinishing()) {
+                    sFileCb = null;
+                    cb.onReceiveValue(null);
+                    return false;
+                }
                 try {
                     Intent i = params.createIntent();
                     i.addCategory(Intent.CATEGORY_OPENABLE);
@@ -546,7 +624,11 @@ public final class PanelController {
         String host = u.getHost() == null ? "" : u.getHost();
         if ("http".equals(scheme) || "https".equals(scheme)) {
             if (ALLOWED_HOST.equals(host)) {
-                load(u.toString());
+                // targetSdk 33 禁明文：http 深链改写成 https 再载入（审查 #16）
+                String target = "http".equals(scheme)
+                        ? u.buildUpon().scheme("https").build().toString()
+                        : u.toString();
+                load(target);
             } else {
                 openExternal(u);
             }
@@ -557,9 +639,8 @@ public final class PanelController {
 
     private static void updatePill(String url) {
         if (sPillBox == null) return;
-        // 远程控制链接带授权特征（token 参数或 /remote、/connect 路径）；官网/营销页一律显示操作钮
-        String u = url == null ? "" : url.toLowerCase();
-        boolean onSession = u.contains("token=") || u.contains("/remote") || u.contains("/connect");
+        // 远程控制链接带授权特征（/remote、/connect 路径或 token 参数）；官网/营销页一律显示操作钮
+        boolean onSession = isSessionLikeUrl(url);
         // 首次使用（还没登录过）不显示操作钮：连账号都没有，扫码/粘贴只会挡登录页、徒增异常路径
         boolean firstRun = !sPrefs.getBoolean("ever_logged_in", false);
         sPillBox.setVisibility(onSession || firstRun ? View.GONE : View.VISIBLE);
@@ -672,7 +753,17 @@ public final class PanelController {
     private static boolean route(Uri u) {
         String scheme = u.getScheme() == null ? "" : u.getScheme();
         if ("http".equals(scheme) || "https".equals(scheme)) {
-            if (inAppHost(u.getHost())) return false; // 应用内打开
+            if (inAppHost(u.getHost())) {
+                if ("http".equals(scheme)) {
+                    // 明文被 targetSdk 33 拒绝，改写为 https 再加载（审查 #16）
+                    WebView wv = sWebView;
+                    if (wv != null) {
+                        wv.loadUrl(u.buildUpon().scheme("https").build().toString());
+                    }
+                    return true;
+                }
+                return false; // 应用内打开
+            }
             openExternal(u);
             return true;
         }
@@ -700,6 +791,11 @@ public final class PanelController {
         try {
             Uri u = Uri.parse(url);
             String scheme = u.getScheme() == null ? "" : u.getScheme();
+            if ("blob".equals(scheme) || "data".equals(scheme)) {
+                // 这类下载只有页面自己能把数据落盘，交系统浏览器也无人接手（审查 #17）
+                toast("暂不支持此类型文件下载，请在电脑端保存");
+                return;
+            }
             if (!"http".equals(scheme) && !"https".equals(scheme)) {
                 openExternal(u);
                 return;

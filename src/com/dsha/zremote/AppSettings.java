@@ -50,10 +50,14 @@ final class AppSettings {
     }
 
     static void setNtfyOn(Context c, boolean on) {
-        // 开启时重置时间水位：从此刻起的消息才需要送达（不吃 ntfy 12h 缓存积压）
-        p(c).edit().putBoolean("ntfy_on", on)
-                .putLong("ntfy_base_ts", System.currentTimeMillis() / 1000)
-                .apply();
+        // 开启时重置时间水位并从此刻起：同时清掉上一条消息 id，否则 last_id 优先于
+        // base_ts，会补拉停用期间（ntfy 12h 缓存内）的积压消息（审查 #13）
+        android.content.SharedPreferences.Editor e = p(c).edit().putBoolean("ntfy_on", on);
+        if (on) {
+            e.putLong("ntfy_base_ts", System.currentTimeMillis() / 1000)
+                    .remove("ntfy_last_id");
+        }
+        e.apply();
     }
 
     static String ntfyServer(Context c) {
@@ -74,6 +78,19 @@ final class AppSettings {
         p(c).edit().putString("ntfy_topic", topic == null ? "" : topic.trim()).apply();
     }
 
+    /** ntfy topic 只接受安全字符：直拼 URL 时特殊字符会改变请求形状（审查 #10）。 */
+    static boolean isValidTopic(String t) {
+        return t != null && t.matches("[A-Za-z0-9_-]{1,64}");
+    }
+
+    /** 把可能出现在异常文本里的凭据（topic、随机串）打码后再入库/展示（审查 #14）。 */
+    static String redact(Context c, String s) {
+        if (s == null) return "";
+        String topic = ntfyTopic(c);
+        if (topic.length() >= 4) s = s.replace(topic, "***");
+        return s.replaceAll("zrc-[A-Za-z0-9_-]{4,}", "zrc-***");
+    }
+
     /** Topic 展示用打码（凭据，避免设置页肩窥泄露全量）。 */
     static String ntfyTopicMasked(Context c) {
         String t = ntfyTopic(c);
@@ -92,7 +109,8 @@ final class AppSettings {
     }
 
     static void setLastCheck(Context c, long ms, String result) {
-        p(c).edit().putLong("last_check_ms", ms).putString("last_check_result", result).apply();
+        p(c).edit().putLong("last_check_ms", ms)
+                .putString("last_check_result", redact(c, result)).apply();
     }
 
     static String lastCheckText(Context c) {
