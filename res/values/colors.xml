@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 定稿图标底色：官方 ZCode 图标实测黑 (#0B0C0C~#141617 采样中值) -->
-    <color name="ic_launcher_bg">#0E0F10</color>
+    <!-- 图标底色＝底稿外框色，必须与 design/make-icon.ps1 报告的 corner 一致，
+         否则自适应前景的 61% 安全区外会露出色差，掩膜裁切处形成硬边 -->
+    <color name="ic_launcher_bg">#246B63</color>
 </resources>

@@ -39,6 +39,8 @@ public class MainActivity extends Activity
     private View mPanelView;
     private ListView mListView;
     private View mSettingsView;
+    /** 设置页当前是否停在「反馈与支持」二级页；返回键与主题重建都要据此选页面。 */
+    private boolean mSupportPage;
     private TextView mMsgHeader;
     private TextView mHeartbeat;
     private TextView[] mTabButtons;
@@ -729,6 +731,11 @@ public class MainActivity extends Activity
 
     private void showTab(int tab) {
         mTab = tab;
+        if (tab != TAB_SETTINGS && mSupportPage) {
+            // 离开设置页就退回一级，下次进入从设置首页开始
+            mSupportPage = false;
+            swapSettingsView(buildSettingsView());
+        }
         mPanelView.setVisibility(tab == TAB_PANEL ? View.VISIBLE : View.GONE);
         mListView.setVisibility(tab == TAB_MESSAGES ? View.VISIBLE : View.GONE);
         mSettingsView.setVisibility(tab == TAB_SETTINGS ? View.VISIBLE : View.GONE);
@@ -854,7 +861,13 @@ public class MainActivity extends Activity
         if (mSearchOverlay != null) {
             dismissSearch();
         } else if (mTab == TAB_MESSAGES || mTab == TAB_SETTINGS) {
-            showTab(TAB_PANEL); // 设置页返回=回面板，不吃 WebView 后退（P3-13）
+            if (mTab == TAB_SETTINGS && mSupportPage) {
+                // 二级页先回设置首页，再按才回面板
+                mSupportPage = false;
+                rebuildSettingsPage();
+            } else {
+                showTab(TAB_PANEL); // 设置页返回=回面板，不吃 WebView 后退（P3-13）
+            }
         } else if (android.os.SystemClock.uptimeMillis() - mExitArmAt < EXIT_ARM_MS) {
             exitAppNow();
         } else {
@@ -1091,14 +1104,7 @@ public class MainActivity extends Activity
 
         box.addView(sectionLabel("关于"));
         box.addView(buttonRow("隐私政策", v -> showPrivacyPolicy()));
-        box.addView(buttonRow("GitHub 主页", v -> {
-            try {
-                startActivity(new Intent(Intent.ACTION_VIEW,
-                        Uri.parse("https://github.com/Rainling-LingYusi014")));
-            } catch (Exception e) {
-                android.widget.Toast.makeText(this, "无可用浏览器", android.widget.Toast.LENGTH_SHORT).show();
-            }
-        }));
+        box.addView(buttonRow("反馈与支持", v -> openSupportPage()));
         TextView about = new TextView(this);
         about.setText(appName() + " v" + versionName() + "\n"
                 + "ZCode 远程控制增强壳 · 非官方项目，与 Z.ai 无隶属关系");
@@ -1511,7 +1517,7 @@ public class MainActivity extends Activity
             mSearchInput = null;
         }
         mBottomBar.setBackgroundColor(Theme.surface());
-        swapSettingsView(buildSettingsView());
+        rebuildSettingsPage();
         showTab(mTab);
     }
 
@@ -1521,6 +1527,148 @@ public class MainActivity extends Activity
         mContent.addView(newView, idx);
         mSettingsView = newView;
         mSettingsView.setVisibility(mTab == TAB_SETTINGS ? View.VISIBLE : View.GONE);
+    }
+
+    /** 主题切换等重建场景按当前停留在哪一级选择页面。 */
+    private void rebuildSettingsPage() {
+        swapSettingsView(mSupportPage ? buildSupportView() : buildSettingsView());
+    }
+
+    private void openSupportPage() {
+        mSupportPage = true;
+        rebuildSettingsPage();
+    }
+
+    /**
+     * 「反馈与支持」二级页：两行入口（GitHub 反馈 / 赞助），图标运行时用 Theme 着色，
+     * 深浅主题自动适配——本机主题跟网页底色走，不能靠 drawable-night 资源限定符。
+     */
+    private View buildSupportView() {
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        sv.setBackgroundColor(Theme.bg());
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int p = (int) dp(16);
+        box.setPadding(p, (int) dp(12), p, (int) dp(16));
+
+        TextView back = new TextView(this);
+        back.setText("‹ 返回设置");
+        back.setTextColor(Theme.textSecondary());
+        back.setTextSize(14);
+        back.setPadding(0, (int) dp(6), 0, (int) dp(12));
+        back.setClickable(true);
+        back.setOnClickListener(v -> {
+            mSupportPage = false;
+            rebuildSettingsPage();
+        });
+        box.addView(back);
+
+        box.addView(supportRow(R.drawable.ic_github, "反馈（GitHub）",
+                "项目仓库、问题反馈与版本下载", v -> openRepo()));
+        box.addView(supportRow(R.drawable.ic_coffee, "支持赞助",
+                "自愿赠与，不影响任何功能", v -> showDonateDialog()));
+
+        TextView note = new TextView(this);
+        note.setText("赞助为自愿赠与，不提供任何额外功能或权益。\n"
+                + "请只在官方仓库发布的版本中扫描收款码。");
+        note.setTextColor(Theme.textSecondary());
+        note.setTextSize(11);
+        note.setLineSpacing(dp(3), 1f);
+        note.setPadding(0, (int) dp(18), 0, 0);
+        box.addView(note);
+
+        sv.addView(box, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+        return sv;
+    }
+
+    private View supportRow(int iconRes, String title, String desc, View.OnClickListener l) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, (int) dp(12), 0, (int) dp(12));
+        row.setClickable(true);
+        row.setOnClickListener(l);
+
+        android.widget.ImageView ic = new android.widget.ImageView(this);
+        ic.setImageResource(iconRes);
+        // 跟着主题走：深色下染浅蓝、浅色下染深蓝，避免固定色在某一侧背景上消失
+        ic.setColorFilter(Theme.accent());
+        LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams((int) dp(22), (int) dp(22));
+        ilp.rightMargin = (int) dp(12);
+        row.addView(ic, ilp);
+
+        LinearLayout texts = new LinearLayout(this);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        TextView t = new TextView(this);
+        t.setText(title);
+        t.setTextColor(Theme.accent());
+        t.setTextSize(15);
+        TextView d = new TextView(this);
+        d.setText(desc);
+        d.setTextColor(Theme.textSecondary());
+        d.setTextSize(12);
+        d.setPadding(0, (int) dp(2), 0, 0);
+        texts.addView(t);
+        texts.addView(d);
+        row.addView(texts);
+        return row;
+    }
+
+    private void openRepo() {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(
+                    "https://github.com/Rainling-LingYusi014/zcode-remote-control-android")));
+        } catch (Exception e) {
+            android.widget.Toast.makeText(this, "无可用浏览器",
+                    android.widget.Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /** 赞助收款码：两张本地图片放大展示，全程不联网。 */
+    private void showDonateDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+        box.setPadding((int) dp(16), (int) dp(8), (int) dp(16), 0);
+        box.addView(qrBlock(R.drawable.donate_wechat, "微信赞赏码"));
+        box.addView(qrBlock(R.drawable.donate_alipay, "支付宝收款码"));
+
+        TextView note = new TextView(this);
+        note.setText("赞助为自愿赠与，不提供任何额外功能或权益。\n"
+                + "付款前请确认收款方为本项目作者。");
+        note.setTextColor(Theme.textSecondary());
+        note.setTextSize(11);
+        note.setPadding(0, (int) dp(10), 0, 0);
+        box.addView(note);
+
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        sv.addView(box);
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("支持赞助")
+                .setView(sv)
+                .setPositiveButton("知道了", null)
+                .show();
+    }
+
+    private View qrBlock(int resId, String label) {
+        LinearLayout b = new LinearLayout(this);
+        b.setOrientation(LinearLayout.VERTICAL);
+        b.setGravity(Gravity.CENTER_HORIZONTAL);
+        b.setPadding(0, (int) dp(6), 0, (int) dp(10));
+        android.widget.ImageView iv = new android.widget.ImageView(this);
+        iv.setImageResource(resId);
+        iv.setAdjustViewBounds(true);
+        iv.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+        b.addView(iv, new LinearLayout.LayoutParams((int) dp(220),
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+        TextView t = new TextView(this);
+        t.setText(label);
+        t.setTextColor(Theme.textSecondary());
+        t.setTextSize(12);
+        t.setPadding(0, (int) dp(6), 0, 0);
+        b.addView(t);
+        return b;
     }
 
     private void showKeepAliveGuide() {
