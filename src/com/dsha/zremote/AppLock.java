@@ -15,6 +15,10 @@ import javax.crypto.spec.PBEKeySpec;
 public final class AppLock {
 
     private static final int ITERATIONS = 50_000;
+    /** 连续输错 5 次开始退避：30s 起，逐次翻倍，上限 10 分钟（审查 P2：PIN 无防爆破）。 */
+    private static final int FREE_TRIES = 5;
+    private static final long BASE_DELAY_MS = 30_000L;
+    private static final long MAX_DELAY_MS = 10 * 60_000L;
 
     private static SharedPreferences p(Context c) {
         return c.getSharedPreferences("zremote", Context.MODE_PRIVATE);
@@ -54,7 +58,32 @@ public final class AppLock {
         }
     }
 
+    /** 剩余退避时间（毫秒，0=现在可以尝试）。 */
+    public static long lockoutRemainingMs(Context c) {
+        long until = p(c).getLong("lock_until", 0L);
+        long now = System.currentTimeMillis();
+        return until > now ? until - now : 0L;
+    }
+
     public static boolean verify(Context c, String pin) {
+        if (lockoutRemainingMs(c) > 0) return false;
+        boolean ok = matches(c, pin);
+        if (ok) {
+            p(c).edit().remove("lock_fails").remove("lock_until").apply();
+        } else {
+            int fails = p(c).getInt("lock_fails", 0) + 1;
+            android.content.SharedPreferences.Editor e = p(c).edit().putInt("lock_fails", fails);
+            if (fails >= FREE_TRIES) {
+                long delay = BASE_DELAY_MS << Math.min(fails - FREE_TRIES, 5);
+                e.putLong("lock_until",
+                        System.currentTimeMillis() + Math.min(delay, MAX_DELAY_MS));
+            }
+            e.apply();
+        }
+        return ok;
+    }
+
+    private static boolean matches(Context c, String pin) {
         try {
             byte[] salt = Base64.getDecoder().decode(p(c).getString("lock_salt", ""));
             byte[] expect = Base64.getDecoder().decode(p(c).getString("lock_hash", ""));
@@ -69,7 +98,9 @@ public final class AppLock {
     }
 
     public static void clear(Context c) {
-        p(c).edit().remove("lock_hash").remove("lock_salt").putBoolean("lock_enabled", false).apply();
+        p(c).edit().remove("lock_hash").remove("lock_salt")
+                .remove("lock_fails").remove("lock_until")
+                .putBoolean("lock_enabled", false).apply();
     }
 
     private static byte[] pbkdf2(String pin, byte[] salt) throws Exception {

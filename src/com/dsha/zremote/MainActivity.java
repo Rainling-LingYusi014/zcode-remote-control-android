@@ -418,10 +418,22 @@ public class MainActivity extends Activity
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         btnLp.topMargin = (int) dp(16);
         btn.setOnClickListener(v -> {
+            long waitMs = AppLock.lockoutRemainingMs(this);
+            if (waitMs > 0) {
+                android.widget.Toast.makeText(this,
+                        "尝试过于频繁，请 " + ((waitMs + 999) / 1000) + " 秒后再试",
+                        android.widget.Toast.LENGTH_SHORT).show();
+                return;
+            }
             if (AppLock.verify(this, pin.getText().toString())) {
                 unlockNow();
             } else {
-                android.widget.Toast.makeText(this, "PIN 不正确", android.widget.Toast.LENGTH_SHORT).show();
+                long leftMs = AppLock.lockoutRemainingMs(this);
+                android.widget.Toast.makeText(this,
+                        leftMs > 0
+                                ? "PIN 错误次数过多，请 " + ((leftMs + 999) / 1000) + " 秒后再试"
+                                : "PIN 不正确",
+                        android.widget.Toast.LENGTH_SHORT).show();
                 pin.setText("");
             }
         });
@@ -1181,10 +1193,21 @@ public class MainActivity extends Activity
                 .setTitle("关闭应用锁")
                 .setView(box)
                 .setPositiveButton("关闭", (d, w) -> {
+                    long waitMs = AppLock.lockoutRemainingMs(this);
+                    if (waitMs > 0) {
+                        android.widget.Toast.makeText(this,
+                                "尝试过于频繁，请 " + ((waitMs + 999) / 1000) + " 秒后再试",
+                                android.widget.Toast.LENGTH_SHORT).show();
+                        return;
+                    }
                     if (AppLock.verify(this, p.getText().toString())) {
                         AppLock.clear(this);
                     } else {
-                        android.widget.Toast.makeText(this, "PIN 不正确，已保留应用锁",
+                        long leftMs = AppLock.lockoutRemainingMs(this);
+                        android.widget.Toast.makeText(this,
+                                leftMs > 0
+                                        ? "PIN 错误次数过多，请 " + ((leftMs + 999) / 1000) + " 秒后再试"
+                                        : "PIN 不正确，已保留应用锁",
                                 android.widget.Toast.LENGTH_SHORT).show();
                     }
                 })

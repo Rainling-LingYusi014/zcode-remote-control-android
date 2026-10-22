@@ -82,19 +82,20 @@ public final class NotifyEngine {
 
     /** JS 桥：页面里的注入脚本通过 window.zrcBridge.* 回传事件/快照。 */
     public static class Bridge {
-        // 每个入口先做来源短路（审查 P1-1）：注入对象对所有页面/子帧可见，route() 拦不住
-        // 302 跳转与 iframe，非白名单主帧一律拒绝，防止任务快照外泄与通知伪造。
+        // 每个入口先做"主帧 + token"短路（审查 P1-1）：addJavascriptInterface 注入的对象
+        // 对所有页面与子帧可见，只查主帧 URL 挡不住同页第三方 iframe。token 由主帧每次
+        // 导航时下发并写在主帧 window 上，跨域 iframe 读不到 → 无从伪造事件或偷快照。
 
         @JavascriptInterface
-        public void onEvents(String json) {
-            if (!PanelController.onTrustedOrigin()) return;
+        public void onEvents(String json, String token) {
+            if (!PanelController.bridgeTrusted(token)) return;
             NotifyEngine.onTaskEvents(json);
         }
 
         /** 注入脚本冷启动时取上一次持久化快照，保证跨进程死亡也能 diff 出"死掉期间"的变化。 */
         @JavascriptInterface
-        public String getLastSnapshot() {
-            if (!PanelController.onTrustedOrigin()) return "null";
+        public String getLastSnapshot(String token) {
+            if (!PanelController.bridgeTrusted(token)) return "null";
             try {
                 return app().getSharedPreferences("zremote", Context.MODE_PRIVATE)
                         .getString("last_snapshot", "null");
@@ -104,8 +105,8 @@ public final class NotifyEngine {
         }
 
         @JavascriptInterface
-        public void onSnapshot(String json) {
-            if (!PanelController.onTrustedOrigin()) return;
+        public void onSnapshot(String json, String token) {
+            if (!PanelController.bridgeTrusted(token)) return;
             try {
                 app().getSharedPreferences("zremote", Context.MODE_PRIVATE)
                         .edit().putString("last_snapshot", json).apply();
@@ -114,21 +115,21 @@ public final class NotifyEngine {
         }
 
         @JavascriptInterface
-        public void onTheme(boolean dark) {
-            if (!PanelController.onTrustedOrigin()) return;
+        public void onTheme(boolean dark, String token) {
+            if (!PanelController.bridgeTrusted(token)) return;
             Theme.set(app(), dark);
         }
 
         /** 注入脚本回报"等待桌面端配对"状态（死会话等待页），原生据此显隐右上角扫码钮。 */
         @JavascriptInterface
-        public void onPairingWait(boolean waiting) {
-            if (!PanelController.onTrustedOrigin()) return;
+        public void onPairingWait(boolean waiting, String token) {
+            if (!PanelController.bridgeTrusted(token)) return;
             PanelController.onPairingWait(waiting);
         }
 
         @JavascriptInterface
-        public void onSearch() {
-            if (!PanelController.onTrustedOrigin()) return;
+        public void onSearch(String token) {
+            if (!PanelController.bridgeTrusted(token)) return;
             PanelController.fireSearch();
         }
     }
@@ -315,18 +316,23 @@ public final class NotifyEngine {
         "if(!RE.test(s))continue;" +
         "m[c.getAttribute('data-testid')]={n:nameOf(c),s:s};}return m;}" +
         "var last=null,timer=null;" +
-        "function loadLast(){try{return JSON.parse(window.zrcBridge.getLastSnapshot())||null;}catch(e){return null;}}" +
-        "function persist(){try{window.zrcBridge.onSnapshot(JSON.stringify(last));}catch(e){}}" +
+        "function loadLast(){try{return JSON.parse(window.zrcBridge.getLastSnapshot(window.__zrcTok))||null;}catch(e){return null;}}" +
+        "function persist(){try{window.zrcBridge.onSnapshot(JSON.stringify(last),window.__zrcTok);}catch(e){}}" +
         "function diff(oldS,newS){var ev=[];if(!oldS)return ev;" +
         "for(var id in newS){var o=oldS[id];var n=newS[id];" +
         "if(!o){ev.push({t:'new',id:id,name:n.n,to:n.s});}" +
         "else if(o.s!==n.s){ev.push({t:'status',id:id,name:n.n,from:o.s,to:n.s});}}" +
         "return ev;}" +
-        "function fire(){timer=null;var s=snapshot();var ev=diff(last,s);last=s;persist();" +
+        "function isEmpty(o){for(var k in o)return false;return true;}" +
+        // 切详情页/渲染空隙时任务卡整体卸载、快照变空：绝不能拿空快照覆盖已有基线，
+        // 否则切回列表会把全部任务当成"新出现"重报（审查 P1-3，幽灵消息第二来源）
+        "function fire(){timer=null;var s=snapshot();" +
         "try{window.__zrcKeepBtn();}catch(e){}" +
+        "if(isEmpty(s)&&last&&!isEmpty(last))return;" +
+        "var ev=diff(last,s);last=s;persist();" +
         "if(ev.length>10)return;" +
         "if(ev.length&&window.zrcBridge&&window.zrcBridge.onEvents){" +
-        "try{window.zrcBridge.onEvents(JSON.stringify(ev));}catch(e){}}}" +
+        "try{window.zrcBridge.onEvents(JSON.stringify(ev),window.__zrcTok);}catch(e){}}}" +
         "window.__zrcKeepBtn = function(){if(!document.getElementById('zrc-search-btn'))insertSearchBtn();};" +
         "function schedule(){if(timer)return;timer=setTimeout(fire,1500);}" +
         "function start(){new MutationObserver(schedule).observe(document.body," +
@@ -352,7 +358,7 @@ public final class NotifyEngine {
         "var t=document.body?document.body.innerText:'';" +
         "w=t.indexOf('等待桌面端')>=0||t.indexOf('连接中断')>=0||t.indexOf('校验失败')>=0" +
         "||t.indexOf('链接已失效')>=0||t.indexOf('连接已断开')>=0;}" +
-        "if(w!==pwLast){pwLast=w;try{window.zrcBridge.onPairingWait(w);}catch(e){}}}" +
+        "if(w!==pwLast){pwLast=w;try{window.zrcBridge.onPairingWait(w,window.__zrcTok);}catch(e){}}}" +
         "function pwWatch(){if(pwObs||!document.body)return;" +
         "try{new MutationObserver(function(){pairWait();}).observe(document.body," +
         "{childList:true,subtree:true,characterData:true});pwObs=true;}catch(e){}}" +
@@ -368,7 +374,7 @@ public final class NotifyEngine {
         "recoLast=n;bs[i].click();break;}}}" +
         "setInterval(autoReconnect,3000);" +
         "function checkTheme(){var d=themeNow();if(d!==lastTheme){lastTheme=d;" +
-        "try{window.zrcBridge.onTheme(d);}catch(e){}}}" +
+        "try{window.zrcBridge.onTheme(d,window.__zrcTok);}catch(e){}}}" +
         "window.__zrcOpenTask = function(tid){try{var c=document.querySelector('[data-testid=\"'+tid+'\"]');" +
         "if(c){c.click();return 'ok';}return 'nolist';}catch(e){return 'err';}};" +
         "window.__zrcListTasks = function(){var out=[];var cs=document.querySelectorAll('[data-testid^=\"task-item-\"]');" +
@@ -387,7 +393,7 @@ public final class NotifyEngine {
         "var b=last.cloneNode(false);b.id='zrc-search-btn';" +
         "b.setAttribute('aria-label','搜索会话');b.title='搜索会话';" +
         "b.innerHTML='<svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"11\" cy=\"11\" r=\"7\"/><line x1=\"21\" y1=\"21\" x2=\"16.3\" y2=\"16.3\"/></svg>';" +
-        "b.addEventListener('click',function(){try{window.zrcBridge.onSearch();}catch(e){}});" +
+        "b.addEventListener('click',function(){try{window.zrcBridge.onSearch(window.__zrcTok);}catch(e){}});" +
         "last.parentElement.insertBefore(b,last.nextSibling);" +
         "}catch(e){}}" +
         "insertSearchBtn();setInterval(function(){try{window.__zrcKeepBtn();}catch(e){}},1000);" +

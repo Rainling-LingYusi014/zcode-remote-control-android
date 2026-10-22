@@ -36,6 +36,8 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.json.JSONObject;
+
 /**
  * 全进程单例的 WebView 容器。
  * 单例的原因：官方远程控制一次只允许一个手机连接，前台/后台必须共用同一会话实例。
@@ -72,6 +74,10 @@ public final class PanelController {
         sActivity = activity;
 
         FrameLayout root = new FrameLayout(sCtxWrapper);
+        // 重建时序下同一 WebView 可能还挂在旧容器上：先摘下再挂，避免
+        // "The specified child already has a parent"（审查 P2：obtainView 无重挂防御）
+        android.view.ViewParent oldParent = sWebView.getParent();
+        if (oldParent instanceof ViewGroup) ((ViewGroup) oldParent).removeView(sWebView);
         root.addView(sWebView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -213,17 +219,47 @@ public final class PanelController {
     /** 主帧当前 URL 快照：onPageStarted/Finished 在主线程更新，桥线程只读快照、不碰 WebView。 */
     private static volatile String sCurrentUrl;
 
+    /** 每次进入会话主帧重新生成；注入脚本随桥调用带回，跨域 iframe 读不到（审查 P1-1）。 */
+    private static volatile String sBridgeToken;
+
+    private static String newToken() {
+        byte[] b = new byte[16];
+        new java.security.SecureRandom().nextBytes(b);
+        StringBuilder sb = new StringBuilder(32);
+        for (byte x : b) sb.append(Character.forDigit((x >> 4) & 0xF, 16))
+                .append(Character.forDigit(x & 0xF, 16));
+        return sb.toString();
+    }
+
     /**
-     * 桥面信任判定：主帧 host 是否在应用内白名单。addJavascriptInterface 的注入对象对
-     * 所有页面与子帧可见，而 route() 拦不住服务端 302 跳转与 iframe（审查 P1-1），
-     * 桥方法入口必须先经本方法短路。注意注入面（onPageStarted）仍以 zcode.z.ai 为界，
-     * 与桥面白名单（*.z.ai / *.bigmodel.cn）是两个不同的信任边界。
+     * 桥面信任判定：必须是会话主帧（https + zcode.z.ai 精确 host）且随调用带回本次 token。
+     * 只查主帧 URL 挡不住同页嵌的第三方 iframe（addJavascriptInterface 对子帧也可见），
+     * 所以再加 token：注入脚本运行在主帧，token 放在主帧 window 上，跨域 iframe 无法读取。
      */
+    static boolean bridgeTrusted(String token) {
+        String cur = sBridgeToken;
+        if (cur == null || token == null || !cur.equals(token)) return false;
+        return onTrustedOrigin();
+    }
+
+    /** 桥面信任域＝精确 zcode.z.ai；路由白名单（inAppHost，含 OAuth 域）是更宽的另一层边界。 */
     static boolean onTrustedOrigin() {
         String url = sCurrentUrl;
         if (url == null) return false;
         try {
-            return inAppHost(Uri.parse(url).getHost());
+            Uri u = Uri.parse(url);
+            return "https".equals(u.getScheme()) && ALLOWED_HOST.equals(u.getHost());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** 会话主帧判定：https + 精确 host。前缀匹配会被 zcode.z.ai.evil.com 绕过（审查 P1-2）。 */
+    static boolean isSessionUrl(String url) {
+        if (url == null) return false;
+        try {
+            Uri u = Uri.parse(url);
+            return "https".equals(u.getScheme()) && ALLOWED_HOST.equals(u.getHost());
         } catch (Exception e) {
             return false;
         }
@@ -403,10 +439,25 @@ public final class PanelController {
             @Override
             public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                 sCurrentUrl = url; // 服务端 302 的落点也会走到这里，快照必须先于注入更新
-                // 尽早注入：脚本自带"等任务卡出现"的重试，SPA 内路由切换不重新触发本回调，
-                // observer 挂在 document.body 上跨路由存活
-                if (url != null && url.startsWith("https://" + ALLOWED_HOST)) {
-                    view.evaluateJavascript(NotifyEngine.INJECT_JS, null);
+                if (isSessionUrl(url)) {
+                    // 每次进入会话主帧换新 token，注入脚本带着它调用桥；跨域子帧拿不到
+                    String tok = newToken();
+                    sBridgeToken = tok;
+                    // 尽早注入：脚本自带"等任务卡出现"的重试，SPA 内路由切换不重新触发本回调，
+                    // observer 挂在 document.body 上跨路由存活
+                    view.evaluateJavascript(
+                            "window.__zrcTok=\"" + tok + "\";" + NotifyEngine.INJECT_JS, null);
+                    return;
+                }
+                sBridgeToken = null; // 非会话主帧：桥面立即失效
+                // 服务端 302 不经过 shouldOverrideUrlLoading：外域主帧不在应用内渲染，
+                // 交给系统浏览器（官方 OAuth 域仍在 inAppHost 内，不受影响）（审查 P1-2）
+                if (url != null && (url.startsWith("http://") || url.startsWith("https://"))) {
+                    Uri u = Uri.parse(url);
+                    if (!inAppHost(u.getHost())) {
+                        view.stopLoading();
+                        openExternal(u);
+                    }
                 }
             }
 
@@ -418,11 +469,20 @@ public final class PanelController {
             @Override
             public void onPageFinished(WebView view, String url) {
                 sCurrentUrl = url;
-                // 只保存真正的会话链接（/remote/v4?sid=...），官网首页不算（仅存 APP 私有目录）
-                if (url != null && url.startsWith("https://" + ALLOWED_HOST + "/remote")) {
-                    // 落地过会话页＝完成过一次登录；登录前不亮扫码/粘贴入口（首次使用不挡登录 UI）
-                    sPrefs.edit().putString("last_url", url)
-                            .putBoolean("ever_logged_in", true).apply();
+                if (isSessionUrl(url)) {
+                    // 兜底：SPA/慢加载时 onPageStarted 的注入可能落空，这里同一 token 再下发一次
+                    // （INJECT_JS 自带 __zrcInstalled 短路，重复执行无副作用）
+                    String tok = sBridgeToken;
+                    if (tok != null) {
+                        view.evaluateJavascript(
+                                "window.__zrcTok=\"" + tok + "\";" + NotifyEngine.INJECT_JS, null);
+                    }
+                    // 只保存真正的会话链接（/remote/...?sid=…），官网首页不算（仅存 APP 私有目录）
+                    if (url.contains("/remote")) {
+                        // 落地过会话页＝完成过一次登录；登录前不亮扫码/粘贴入口（首次使用不挡登录 UI）
+                        sPrefs.edit().putString("last_url", url)
+                                .putBoolean("ever_logged_in", true).apply();
+                    }
                 }
                 updatePill(url);
             }
@@ -562,7 +622,8 @@ public final class PanelController {
     static void openTask(String testid) {
         android.webkit.WebView wv = webview();
         if (wv == null || testid == null || testid.isEmpty()) return;
-        String js = "window.__zrcOpenTask && window.__zrcOpenTask('" + testid + "')";
+        String js = "window.__zrcOpenTask && window.__zrcOpenTask("
+                + JSONObject.quote(testid) + ")";
         wv.evaluateJavascript(js, v -> {
             if (v != null && v.contains("nolist")) {
                 wv.postDelayed(() -> {
@@ -623,7 +684,16 @@ public final class PanelController {
                 openExternal(u);
                 return;
             }
+            // 下载可被页面内任意脚本/iframe 触发：只允许官方域走 DownloadManager，
+            // 其余交系统浏览器（它有独立的下载安全提示）（审查 P2）
+            if (!inAppHost(u.getHost())) {
+                openExternal(u);
+                return;
+            }
             String name = URLUtil.guessFileName(url, contentDisposition, mime);
+            if (TextUtils.isEmpty(name) || name.contains("/") || name.contains("\\")) {
+                name = "download";
+            }
             DownloadManager.Request r = new DownloadManager.Request(u);
             r.setTitle(name);
             if (mime != null) r.setMimeType(mime);
